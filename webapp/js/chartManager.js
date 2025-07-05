@@ -17,13 +17,25 @@ class ChartManager {
     }
 
     registerChartJS() {
-        // Register Chart.js components
-        Chart.register(
-            ...Object.values(Chart.controllers),
-            ...Object.values(Chart.elements),
-            ...Object.values(Chart.plugins),
-            ...Object.values(Chart.scales)
-        );
+        // Check if Chart.js is loaded
+        if (typeof Chart === 'undefined') {
+            throw new Error('Chart.js not loaded');
+        }
+        
+        try {
+            // Register Chart.js components
+            Chart.register(
+                ...Object.values(Chart.controllers),
+                ...Object.values(Chart.elements),
+                ...Object.values(Chart.plugins),
+                ...Object.values(Chart.scales)
+            );
+            
+            console.log('Chart.js components registered successfully');
+        } catch (error) {
+            console.error('Error registering Chart.js components:', error);
+            throw error;
+        }
     }
 
     // Initialize all charts
@@ -47,14 +59,21 @@ class ChartManager {
         // Fetch initial data
         await this.loadChartData(this.currentTimeframe);
 
+        // Check if candlestick chart type is available
+        const chartType = Chart.registry.getController('candlestick') ? 'candlestick' : 'line';
+        if (chartType === 'line') {
+            console.warn('Candlestick chart not available, using line chart as fallback');
+        }
+
         const config = {
-            type: 'candlestick',
+            type: chartType,
             data: {
                 datasets: [{
                     label: 'XAUUSD',
-                    data: this.prepareOHLCData(),
+                    data: chartType === 'candlestick' ? this.prepareOHLCData() : this.prepareLineData(),
                     borderColor: CONFIG.CHART.COLORS.ACCENT,
-                    backgroundColor: 'transparent'
+                    backgroundColor: chartType === 'candlestick' ? 'transparent' : CONFIG.CHART.COLORS.ACCENT + '20',
+                    fill: chartType === 'line'
                 }]
             },
             options: {
@@ -381,6 +400,16 @@ class ChartManager {
         }));
     }
 
+    // Prepare line data (close prices) for fallback
+    prepareLineData() {
+        if (!this.chartData || this.chartData.length === 0) return [];
+
+        return this.chartData.map(item => ({
+            x: new Date(item.timestamp).getTime(),
+            y: item.close
+        }));
+    }
+
     // Update charts with new data
     updateCharts() {
         if (!this.isInitialized) return;
@@ -396,8 +425,11 @@ class ChartManager {
     updateMainChart() {
         if (!this.mainChart) return;
 
-        // Update main dataset
-        this.mainChart.data.datasets[0].data = this.prepareOHLCData();
+        // Update main dataset based on chart type
+        const isCandlestick = this.mainChart.config.type === 'candlestick';
+        this.mainChart.data.datasets[0].data = isCandlestick ? 
+            this.prepareOHLCData() : 
+            this.prepareLineData();
 
         // Update indicator datasets
         this.updateIndicatorDatasets();

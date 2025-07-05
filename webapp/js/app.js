@@ -23,6 +23,9 @@ class XAUUSDApp {
             this.loadPreferences();
             
             // Initialize chart manager
+            if (!window.chartManager) {
+                throw new Error('ChartManager not loaded');
+            }
             await window.chartManager.initialize();
             
             // Setup real-time updates
@@ -568,15 +571,80 @@ ${error.message}
     }
 }
 
-// Initialize application when DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
-    // Create global app instance
-    window.xauusdApp = new XAUUSDApp();
-    
-    // Initialize the application
-    window.xauusdApp.initialize().catch(error => {
-        console.error('Failed to initialize application:', error);
+// Wait for all components to be loaded
+function waitForComponents() {
+    return new Promise((resolve) => {
+        const checkComponents = () => {
+            console.log('Checking components:', {
+                CONFIG: !!window.CONFIG,
+                dataFetcher: !!window.dataFetcher,
+                technicalIndicators: !!window.technicalIndicators,
+                chartManager: !!window.chartManager,
+                Chart: typeof Chart !== 'undefined'
+            });
+            
+            if (window.CONFIG && 
+                window.dataFetcher && 
+                window.technicalIndicators && 
+                window.chartManager &&
+                typeof Chart !== 'undefined') {
+                console.log('All components loaded successfully');
+                resolve();
+            } else {
+                setTimeout(checkComponents, 100);
+            }
+        };
+        checkComponents();
     });
+}
+
+// Initialize application when DOM and components are loaded
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        // Wait for all components to be available
+        await waitForComponents();
+        
+        // Create global app instance
+        window.xauusdApp = new XAUUSDApp();
+        
+        // Initialize the application
+        await window.xauusdApp.initialize();
+        
+    } catch (error) {
+        console.error('Failed to initialize application:', error);
+        // Show error to user
+        document.body.innerHTML = `
+            <div style="
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: #0d1421;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                color: #ef5350;
+                font-family: 'Inter', sans-serif;
+                text-align: center;
+                padding: 20px;
+            ">
+                <h2>Failed to Load Application</h2>
+                <p>Error: ${error.message}</p>
+                <button onclick="location.reload()" style="
+                    padding: 12px 24px;
+                    background: #f7931e;
+                    border: none;
+                    border-radius: 6px;
+                    color: #000;
+                    font-weight: 600;
+                    cursor: pointer;
+                    margin-top: 20px;
+                ">Reload Page</button>
+            </div>
+        `;
+    }
 });
 
 // Handle page unload
