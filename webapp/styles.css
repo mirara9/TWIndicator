@@ -552,6 +552,45 @@ body {
     background: #ef5350;
 }
 
+/* Demo Data Indicator */
+.demo-indicator {
+    position: fixed;
+    bottom: 20px;
+    right: 140px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(42, 46, 57, 0.95);
+    border: 1px solid rgba(255, 193, 7, 0.6);
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #ffc107;
+    backdrop-filter: blur(10px);
+    z-index: 100;
+    animation: pulse-warning 3s infinite;
+}
+
+.demo-icon {
+    font-size: 14px;
+}
+
+.demo-text {
+    color: #ffc107;
+}
+
+@keyframes pulse-warning {
+    0%, 100% { 
+        border-color: rgba(255, 193, 7, 0.6);
+        background: rgba(42, 46, 57, 0.95);
+    }
+    50% { 
+        border-color: rgba(255, 193, 7, 0.9);
+        background: rgba(42, 46, 57, 1);
+    }
+}
+
 /* Animations */
 @keyframes spin {
     0% { transform: rotate(0deg); }

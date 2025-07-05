@@ -32,6 +32,8 @@ class DataFetcher {
 
     // Generate realistic demo data
     generateDemoData(timeframe = '60', count = 100, symbol = CONFIG.CURRENT_SYMBOL) {
+        console.log(`Generating demo data: ${count} candles for ${symbol} on ${timeframe}m timeframe`);
+        
         const data = [];
         const now = new Date();
         const intervalMs = parseInt(timeframe) * 60 * 1000;
@@ -42,34 +44,58 @@ class DataFetcher {
         for (let i = count - 1; i >= 0; i--) {
             const timestamp = new Date(now.getTime() - (i * intervalMs));
             
-            // Add some trend persistence
-            if (Math.random() < 0.1) {
-                trend = (Math.random() - 0.5) * 2;
+            // Add some trend persistence and market patterns
+            if (Math.random() < 0.15) {
+                trend = (Math.random() - 0.5) * 1.5;
+            }
+            
+            // Add some intraday patterns for forex
+            let timeMultiplier = 1;
+            if (symbolConfig?.type !== 'crypto') {
+                const hour = timestamp.getUTCHours();
+                // More volatility during London/NY overlap (13-16 UTC)
+                if (hour >= 13 && hour <= 16) {
+                    timeMultiplier = 1.4;
+                }
+                // Lower volatility during Asian session for XAUUSD
+                else if (hour >= 22 || hour <= 3) {
+                    timeMultiplier = 0.7;
+                }
             }
             
             // Generate OHLC data
             const volatility = this.getVolatilityForHour(timestamp.getUTCHours(), symbol);
-            const symbolVolatility = symbolConfig ? symbolConfig.volatility : CONFIG.API.DEMO_VOLATILITY;
-            const change = (Math.random() - 0.5 + trend * 0.3) * currentPrice * symbolVolatility;
+            const symbolVolatility = symbolConfig ? symbolConfig.volatility : 0.02;
+            const effectiveVolatility = symbolVolatility * timeMultiplier;
+            const change = (Math.random() - 0.5 + trend * 0.4) * currentPrice * effectiveVolatility;
             
             const open = currentPrice;
-            const close = currentPrice + change;
-            const high = Math.max(open, close) + Math.random() * Math.abs(change) * 0.5;
-            const low = Math.min(open, close) - Math.random() * Math.abs(change) * 0.5;
-            const volume = Math.floor(Math.random() * 1000000 + 500000);
+            const close = Math.max(0.01, currentPrice + change); // Ensure positive prices
+            const spread = Math.abs(change) * (0.2 + Math.random() * 0.3);
+            const high = Math.max(open, close) + spread;
+            const low = Math.min(open, close) - spread;
+            
+            // Volume varies by symbol type and time
+            let baseVolume = symbolConfig?.type === 'crypto' ? 
+                Math.floor(Math.random() * 500000 + 1000000) : // Higher crypto volume
+                Math.floor(Math.random() * 100000 + 50000);   // Lower forex volume
+            
+            baseVolume = Math.floor(baseVolume * timeMultiplier);
 
+            const precision = symbolConfig ? symbolConfig.precision : 2;
             data.push({
                 timestamp: timestamp.toISOString(),
-                open: parseFloat(open.toFixed(2)),
-                high: parseFloat(high.toFixed(2)),
-                low: parseFloat(low.toFixed(2)),
-                close: parseFloat(close.toFixed(2)),
-                volume: volume
+                open: parseFloat(open.toFixed(precision)),
+                high: parseFloat(high.toFixed(precision)),
+                low: parseFloat(low.toFixed(precision)),
+                close: parseFloat(close.toFixed(precision)),
+                volume: baseVolume
             });
 
             currentPrice = close;
         }
 
+        console.log(`Generated ${data.length} demo candles for ${symbol}`);
         return data;
     }
 
@@ -190,12 +216,21 @@ class DataFetcher {
             }
         }
 
-        // If offline, use demo data
-        if (!this.isOnline) {
-            console.log('Offline - using demo data');
+        // Check if we should force demo mode (when API keys are 'demo' or not configured)
+        const shouldUseDemoMode = CONFIG.API.FORCE_DEMO_MODE || 
+                                 (CONFIG.API.ALPHA_VANTAGE.API_KEY === 'demo' && 
+                                  CONFIG.API.TWELVE_DATA.API_KEY === 'demo' && 
+                                  CONFIG.API.FMP.API_KEY === 'demo') ||
+                                 !this.isOnline;
+
+        if (shouldUseDemoMode) {
+            console.log('Using demo data mode');
+            this.showDemoIndicator(true);
             const demoData = this.generateDemoData(timeframe, 100, symbol);
             this.cache.set(cacheKey, { data: demoData, timestamp: Date.now() });
             return demoData;
+        } else {
+            this.showDemoIndicator(false);
         }
 
         // Try APIs in order
@@ -233,6 +268,7 @@ class DataFetcher {
 
         // All APIs failed, use demo data
         console.warn('All APIs failed, using demo data');
+        this.showDemoIndicator(true);
         const demoData = this.generateDemoData(timeframe, 100, symbol);
         this.cache.set(cacheKey, { data: demoData, timestamp: Date.now() });
         return demoData;
@@ -382,6 +418,14 @@ class DataFetcher {
             size: this.cache.size,
             keys: Array.from(this.cache.keys())
         };
+    }
+
+    // Show/hide demo data indicator
+    showDemoIndicator(show) {
+        const indicator = document.getElementById('demo-indicator');
+        if (indicator) {
+            indicator.style.display = show ? 'flex' : 'none';
+        }
     }
 
     // Clean up

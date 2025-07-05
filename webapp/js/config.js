@@ -45,7 +45,7 @@ const CONFIG = {
         // Backup API - Twelve Data (Free tier: 800 requests per day)
         TWELVE_DATA: {
             BASE_URL: 'https://api.twelvedata.com',
-            API_KEY: 'demo', // Replace with your API key
+            API_KEY: '36FI206E7T1KVALG', // Your API key
             ENDPOINTS: {
                 TIME_SERIES: '/time_series',
                 REAL_TIME: '/price',
@@ -65,7 +65,8 @@ const CONFIG = {
         },
         
         // Fallback - Generate demo data if APIs fail
-        USE_DEMO_DATA: true
+        USE_DEMO_DATA: true,
+        FORCE_DEMO_MODE: false // Set to true to use demo data only (useful when API keys are 'demo')
     },
 
     // Chart Configuration

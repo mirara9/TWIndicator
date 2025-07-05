@@ -141,7 +141,7 @@ class XAUUSDApp {
             // Update connection status
             this.updateConnectionStatus('connected');
             
-            // Fetch latest data for current timeframe
+            // Fetch latest data for current timeframe and symbol
             await window.chartManager.loadChartData(
                 window.chartManager.currentTimeframe,
                 false // Don't use cache for real-time updates
@@ -255,6 +255,10 @@ class XAUUSDApp {
             
             // Update UI elements
             this.updateSymbolDisplay(symbol);
+            
+            // Force clear all cache to ensure fresh data
+            window.dataFetcher.clearCache();
+            window.technicalIndicators.clearCache();
             
             // Reload chart data for new symbol
             await window.chartManager.loadChartData(
