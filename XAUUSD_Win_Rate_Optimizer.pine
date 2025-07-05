@@ -1,0 +1,390 @@
+//@version=5
+strategy("XAUUSD Win Rate Optimizer - Target 80%+", shorttitle="XAUUSD WR Opt", overlay=true, 
+         default_qty_type=strategy.percent_of_equity, default_qty_value=5,
+         commission_type=strategy.commission.percent, commission_value=0.1,
+         max_bars_back=5000)
+
+// ==========================================
+// WIN RATE OPTIMIZATION PARAMETERS
+// ==========================================
+
+// Signal Threshold Optimization (Critical for Win Rate)
+signal_threshold = input.int(9, "Signal Threshold", minval=6, maxval=12, step=1, group="Win Rate Optimization")
+score_difference_min = input.int(4, "Min Score Difference", minval=2, maxval=6, step=1, group="Win Rate Optimization")
+
+// Trend Filter Optimization
+adx_threshold = input.int(30, "ADX Threshold", minval=20, maxval=40, step=2, group="Trend Filter")
+ema_separation = input.float(0.002, "EMA Separation", minval=0.001, maxval=0.005, step=0.001, group="Trend Filter")
+
+// RSI Optimization for Quality
+rsi_bull_min = input.int(45, "RSI Bull Min", minval=40, maxval=55, step=1, group="RSI Filter")
+rsi_bull_max = input.int(70, "RSI Bull Max", minval=65, maxval=80, step=1, group="RSI Filter")
+rsi_bear_min = input.int(30, "RSI Bear Min", minval=20, maxval=35, step=1, group="RSI Filter")
+rsi_bear_max = input.int(55, "RSI Bear Max", minval=45, maxval=60, step=1, group="RSI Filter")
+
+// MACD Quality Filter
+macd_histogram_threshold = input.float(0.5, "MACD Histogram Threshold", minval=0.1, maxval=1.0, step=0.1, group="MACD Filter")
+
+// Fibonacci Sensitivity
+fib_sensitivity = input.float(0.003, "Fibonacci Sensitivity", minval=0.001, maxval=0.01, step=0.001, group="Fibonacci")
+
+// Volume Filter
+volume_threshold = input.float(1.3, "Volume Threshold", minval=1.0, maxval=2.0, step=0.1, group="Volume Filter")
+
+// Volatility Filter
+bb_squeeze_threshold = input.float(0.4, "BB Squeeze Threshold", minval=0.2, maxval=0.8, step=0.1, group="Volatility Filter")
+
+// Risk Management for High Win Rate
+atr_sl_mult = input.float(1.3, "ATR SL Multiplier", minval=1.0, maxval=2.0, step=0.1, group="Risk Management")
+atr_tp_mult = input.float(2.5, "ATR TP Multiplier", minval=2.0, maxval=4.0, step=0.1, group="Risk Management")
+
+// Session Filter
+london_only = input.bool(false, "London Session Only", group="Session Filter")
+newyork_only = input.bool(false, "New York Session Only", group="Session Filter")
+overlap_only = input.bool(true, "Overlap Sessions Only", group="Session Filter")
+
+// ==========================================
+// OPTIMIZED INDICATORS
+// ==========================================
+
+// EMAs
+ema8 = ta.ema(close, 8)
+ema21 = ta.ema(close, 21)
+ema55 = ta.ema(close, 55)
+ema200 = ta.ema(close, 200)
+
+// RSI
+rsi = ta.sma(ta.rsi(close, 14), 3)
+
+// MACD
+[macd_line, macd_signal_line, macd_histogram] = ta.macd(close, 12, 26, 9)
+
+// Bollinger Bands
+bb_basis = ta.sma(close, 20)
+bb_dev = 2.0 * ta.stdev(close, 20)
+bb_upper = bb_basis + bb_dev
+bb_lower = bb_basis - bb_dev
+
+// ATR
+atr = ta.atr(14)
+
+// ADX
+[adx_val, di_plus, di_minus] = ta.adx(14)
+
+// Volume
+volume_sma = ta.sma(volume, 21)
+volume_ratio = volume / volume_sma
+
+// ==========================================
+// OPTIMIZED FIBONACCI
+// ==========================================
+
+// Swing Points
+swing_high = ta.pivothigh(high, 25, 25)
+swing_low = ta.pivotlow(low, 25, 25)
+
+var float recent_high = na
+var float recent_low = na
+
+if not na(swing_high)
+    recent_high := swing_high
+if not na(swing_low)
+    recent_low := swing_low
+
+// Fibonacci Levels
+fib_range = recent_high - recent_low
+fib_236 = recent_low + fib_range * 0.236
+fib_382 = recent_low + fib_range * 0.382
+fib_500 = recent_low + fib_range * 0.500
+fib_618 = recent_low + fib_range * 0.618
+fib_786 = recent_low + fib_range * 0.786
+
+// Fibonacci Support/Resistance
+near_fib_support = math.abs(close - fib_236) / close < fib_sensitivity or 
+                   math.abs(close - fib_382) / close < fib_sensitivity or 
+                   math.abs(close - fib_500) / close < fib_sensitivity or 
+                   math.abs(close - fib_618) / close < fib_sensitivity
+
+near_fib_resistance = math.abs(close - fib_618) / close < fib_sensitivity or 
+                      math.abs(close - fib_786) / close < fib_sensitivity
+
+// ==========================================
+// ULTRA-STRICT SIGNAL CRITERIA
+// ==========================================
+
+// EMA Quality Check
+ema_quality_bull = (ema8 - ema21) / ema21 > ema_separation and 
+                   (ema21 - ema55) / ema55 > ema_separation and 
+                   (ema55 - ema200) / ema200 > ema_separation
+
+ema_quality_bear = (ema21 - ema8) / ema8 > ema_separation and 
+                   (ema55 - ema21) / ema21 > ema_separation and 
+                   (ema200 - ema55) / ema55 > ema_separation
+
+// RSI Quality Check
+rsi_quality_bull = rsi >= rsi_bull_min and rsi <= rsi_bull_max
+rsi_quality_bear = rsi >= rsi_bear_min and rsi <= rsi_bear_max
+
+// MACD Quality Check
+macd_quality_bull = macd_line > macd_signal_line and 
+                    macd_line > 0 and 
+                    macd_histogram > macd_histogram_threshold and
+                    macd_histogram > macd_histogram[1]
+
+macd_quality_bear = macd_line < macd_signal_line and 
+                    macd_line < 0 and 
+                    macd_histogram < -macd_histogram_threshold and
+                    macd_histogram < macd_histogram[1]
+
+// Volume Quality Check
+volume_quality = volume_ratio > volume_threshold
+
+// Volatility Quality Check
+bb_squeeze = (bb_upper - bb_lower) / bb_basis
+volatility_quality = bb_squeeze > bb_squeeze_threshold
+
+// Session Quality Check
+london_session = time(timeframe.period, "0800-1700", "UTC")
+newyork_session = time(timeframe.period, "1300-2200", "UTC")
+overlap_session = time(timeframe.period, "1300-1700", "UTC")
+
+session_quality = false
+if london_only and not na(london_session)
+    session_quality := true
+else if newyork_only and not na(newyork_session)
+    session_quality := true
+else if overlap_only and not na(overlap_session)
+    session_quality := true
+else if not london_only and not newyork_only and not overlap_only
+    session_quality := not na(london_session) or not na(newyork_session)
+
+// ==========================================
+// HIGH WIN RATE SCORING SYSTEM
+// ==========================================
+
+// Enhanced Bull Scoring for 80%+ Win Rate
+bull_score = 0
+
+// Mandatory Trend Components (4 points - must have all)
+bull_score := bull_score + (close > ema200 ? 1 : 0)
+bull_score := bull_score + (ema_quality_bull ? 2 : 0)
+bull_score := bull_score + (adx_val > adx_threshold ? 1 : 0)
+
+// High Quality Momentum (3 points - must have all)
+bull_score := bull_score + (rsi_quality_bull ? 1 : 0)
+bull_score := bull_score + (macd_quality_bull ? 2 : 0)
+
+// Support/Resistance (2 points)
+bull_score := bull_score + (close > bb_basis and near_fib_support ? 2 : 0)
+
+// Quality Filters (3 points)
+bull_score := bull_score + (volume_quality ? 1 : 0)
+bull_score := bull_score + (volatility_quality ? 1 : 0)
+bull_score := bull_score + (session_quality ? 1 : 0)
+
+// Enhanced Bear Scoring for 80%+ Win Rate
+bear_score = 0
+
+// Mandatory Trend Components (4 points - must have all)
+bear_score := bear_score + (close < ema200 ? 1 : 0)
+bear_score := bear_score + (ema_quality_bear ? 2 : 0)
+bear_score := bear_score + (adx_val > adx_threshold ? 1 : 0)
+
+// High Quality Momentum (3 points - must have all)
+bear_score := bear_score + (rsi_quality_bear ? 1 : 0)
+bear_score := bear_score + (macd_quality_bear ? 2 : 0)
+
+// Support/Resistance (2 points)
+bear_score := bear_score + (close < bb_basis and near_fib_resistance ? 2 : 0)
+
+// Quality Filters (3 points)
+bear_score := bear_score + (volume_quality ? 1 : 0)
+bear_score := bear_score + (volatility_quality ? 1 : 0)
+bear_score := bear_score + (session_quality ? 1 : 0)
+
+// ==========================================
+// ULTRA-CONSERVATIVE SIGNAL GENERATION
+// ==========================================
+
+// Require near-perfect scores
+buy_signal = bull_score >= signal_threshold and 
+             bull_score > bear_score and 
+             (bull_score - bear_score) >= score_difference_min
+
+sell_signal = bear_score >= signal_threshold and 
+              bear_score > bull_score and 
+              (bear_score - bull_score) >= score_difference_min
+
+// ==========================================
+// CONSERVATIVE RISK MANAGEMENT
+// ==========================================
+
+// Tight stops for high win rate
+stop_loss_distance = atr * atr_sl_mult
+take_profit_distance = atr * atr_tp_mult
+
+buy_stop_loss = close - stop_loss_distance
+buy_take_profit = close + take_profit_distance
+
+sell_stop_loss = close + stop_loss_distance
+sell_take_profit = close - take_profit_distance
+
+// ==========================================
+// STRATEGY EXECUTION
+// ==========================================
+
+// Conservative position sizing
+position_size = 3.0  // Lower size for higher win rate focus
+
+// Entry conditions
+long_condition = buy_signal and strategy.position_size == 0
+short_condition = sell_signal and strategy.position_size == 0
+
+// Execute trades
+if long_condition
+    strategy.entry("Long", strategy.long, qty=position_size)
+    strategy.exit("Long Exit", "Long", stop=buy_stop_loss, limit=buy_take_profit)
+
+if short_condition
+    strategy.entry("Short", strategy.short, qty=position_size)
+    strategy.exit("Short Exit", "Short", stop=sell_stop_loss, limit=sell_take_profit)
+
+// ==========================================
+// PLOTTING
+// ==========================================
+
+// EMAs
+plot(ema8, "EMA 8", color=color.blue, linewidth=1)
+plot(ema21, "EMA 21", color=color.orange, linewidth=1)
+plot(ema55, "EMA 55", color=color.red, linewidth=2)
+plot(ema200, "EMA 200", color=color.purple, linewidth=3)
+
+// Fibonacci levels
+plot(not na(fib_236) ? fib_236 : na, "Fib 23.6%", color=color.yellow, linewidth=1, style=plot.style_linebr)
+plot(not na(fib_382) ? fib_382 : na, "Fib 38.2%", color=color.yellow, linewidth=1, style=plot.style_linebr)
+plot(not na(fib_500) ? fib_500 : na, "Fib 50.0%", color=color.yellow, linewidth=2, style=plot.style_linebr)
+plot(not na(fib_618) ? fib_618 : na, "Fib 61.8%", color=color.yellow, linewidth=1, style=plot.style_linebr)
+
+// High win rate signals
+plotshape(long_condition, title="High Win Rate Buy", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.large)
+plotshape(short_condition, title="High Win Rate Sell", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.large)
+
+// Quality background
+bgcolor(session_quality and volume_quality and volatility_quality ? color.new(color.green, 95) : na)
+
+// ==========================================
+// WIN RATE OPTIMIZATION DASHBOARD
+// ==========================================
+
+if barstate.islast
+    var table opt_table = table.new(position.top_right, 3, 16, bgcolor=color.white, border_width=2)
+    
+    // Performance calculation
+    total_trades = strategy.closedtrades
+    winning_trades = strategy.wintrades
+    win_rate = total_trades > 0 ? winning_trades / total_trades * 100 : 0
+    profit_factor = strategy.grossprofit / math.max(strategy.grossloss, 1)
+    max_dd = strategy.max_drawdown
+    
+    // Win rate optimization score
+    win_rate_score = 0
+    win_rate_score := win_rate >= 85 ? 30 : win_rate >= 80 ? 25 : win_rate >= 75 ? 20 : win_rate >= 70 ? 15 : win_rate >= 65 ? 10 : 0
+    profit_score = profit_factor >= 2.0 ? 20 : profit_factor >= 1.5 ? 15 : profit_factor >= 1.2 ? 10 : profit_factor >= 1.0 ? 5 : 0
+    dd_score = max_dd <= 5 ? 20 : max_dd <= 8 ? 15 : max_dd <= 10 ? 10 : max_dd <= 15 ? 5 : 0
+    trade_score = total_trades >= 20 ? 15 : total_trades >= 10 ? 10 : total_trades >= 5 ? 5 : 0
+    quality_score = signal_threshold >= 10 ? 15 : signal_threshold >= 9 ? 10 : signal_threshold >= 8 ? 5 : 0
+    
+    optimization_score = win_rate_score + profit_score + dd_score + trade_score + quality_score
+    
+    // Headers
+    table.cell(opt_table, 0, 0, "WIN RATE OPTIMIZER", bgcolor=color.navy, text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 1, 0, "Value", bgcolor=color.navy, text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 2, 0, "Target", bgcolor=color.navy, text_color=color.white, text_size=size.small)
+    
+    // Key metrics
+    table.cell(opt_table, 0, 1, "Win Rate", text_size=size.small)
+    table.cell(opt_table, 1, 1, str.tostring(math.round(win_rate, 1)) + "%", 
+               bgcolor=win_rate >= 80 ? color.lime : win_rate >= 70 ? color.green : win_rate >= 60 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 2, 1, "80%+", text_size=size.small)
+    
+    table.cell(opt_table, 0, 2, "Max Drawdown", text_size=size.small)
+    table.cell(opt_table, 1, 2, str.tostring(math.round(max_dd, 1)) + "%", 
+               bgcolor=max_dd <= 10 ? color.green : max_dd <= 15 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 2, 2, "<10%", text_size=size.small)
+    
+    table.cell(opt_table, 0, 3, "Profit Factor", text_size=size.small)
+    table.cell(opt_table, 1, 3, str.tostring(math.round(profit_factor, 2)), 
+               bgcolor=profit_factor >= 1.5 ? color.green : profit_factor >= 1.0 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 2, 3, "1.5+", text_size=size.small)
+    
+    table.cell(opt_table, 0, 4, "Total Trades", text_size=size.small)
+    table.cell(opt_table, 1, 4, str.tostring(total_trades), text_size=size.small)
+    table.cell(opt_table, 2, 4, "10+", text_size=size.small)
+    
+    table.cell(opt_table, 0, 5, "Optimization Score", text_size=size.small)
+    table.cell(opt_table, 1, 5, str.tostring(optimization_score) + "/100", 
+               bgcolor=optimization_score >= 80 ? color.lime : optimization_score >= 60 ? color.green : optimization_score >= 40 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 2, 5, "80+", text_size=size.small)
+    
+    // Current signal quality
+    table.cell(opt_table, 0, 6, "Signal Threshold", text_size=size.small)
+    table.cell(opt_table, 1, 6, str.tostring(signal_threshold), text_size=size.small)
+    table.cell(opt_table, 2, 6, "9+", text_size=size.small)
+    
+    table.cell(opt_table, 0, 7, "Bull Score", text_size=size.small)
+    table.cell(opt_table, 1, 7, str.tostring(bull_score) + "/12", 
+               bgcolor=bull_score >= signal_threshold ? color.green : color.red, 
+               text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 2, 7, str.tostring(signal_threshold) + "+", text_size=size.small)
+    
+    table.cell(opt_table, 0, 8, "Bear Score", text_size=size.small)
+    table.cell(opt_table, 1, 8, str.tostring(bear_score) + "/12", 
+               bgcolor=bear_score >= signal_threshold ? color.red : color.gray, 
+               text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 2, 8, str.tostring(signal_threshold) + "+", text_size=size.small)
+    
+    table.cell(opt_table, 0, 9, "ADX", text_size=size.small)
+    table.cell(opt_table, 1, 9, str.tostring(math.round(adx_val, 1)), 
+               bgcolor=adx_val > adx_threshold ? color.green : color.red, 
+               text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 2, 9, str.tostring(adx_threshold) + "+", text_size=size.small)
+    
+    table.cell(opt_table, 0, 10, "RSI", text_size=size.small)
+    table.cell(opt_table, 1, 10, str.tostring(math.round(rsi, 1)), 
+               bgcolor=rsi_quality_bull or rsi_quality_bear ? color.green : color.red, 
+               text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 2, 10, "Quality", text_size=size.small)
+    
+    table.cell(opt_table, 0, 11, "MACD Quality", text_size=size.small)
+    table.cell(opt_table, 1, 11, macd_quality_bull or macd_quality_bear ? "HIGH" : "LOW", 
+               bgcolor=macd_quality_bull or macd_quality_bear ? color.green : color.red, 
+               text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 2, 11, "HIGH", text_size=size.small)
+    
+    table.cell(opt_table, 0, 12, "Volume Quality", text_size=size.small)
+    table.cell(opt_table, 1, 12, volume_quality ? "HIGH" : "LOW", 
+               bgcolor=volume_quality ? color.green : color.red, 
+               text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 2, 12, "HIGH", text_size=size.small)
+    
+    table.cell(opt_table, 0, 13, "Volatility Quality", text_size=size.small)
+    table.cell(opt_table, 1, 13, volatility_quality ? "HIGH" : "LOW", 
+               bgcolor=volatility_quality ? color.green : color.red, 
+               text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 2, 13, "HIGH", text_size=size.small)
+    
+    table.cell(opt_table, 0, 14, "Session Quality", text_size=size.small)
+    table.cell(opt_table, 1, 14, session_quality ? "ACTIVE" : "INACTIVE", 
+               bgcolor=session_quality ? color.green : color.red, 
+               text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 2, 14, "ACTIVE", text_size=size.small)
+    
+    table.cell(opt_table, 0, 15, "Current Signal", text_size=size.small)
+    current_signal = long_condition ? "BUY" : short_condition ? "SELL" : "WAIT"
+    signal_color = long_condition ? color.lime : short_condition ? color.red : color.gray
+    table.cell(opt_table, 1, 15, current_signal, bgcolor=signal_color, text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 2, 15, "HIGH PROB", text_size=size.small)

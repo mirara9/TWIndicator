@@ -1,0 +1,222 @@
+//@version=5
+indicator("XAUUSD Master Trading Indicator", shorttitle="XAUUSD Master", overlay=true, max_bars_back=5000)
+
+// ==========================================
+// INPUT PARAMETERS
+// ==========================================
+
+// Moving Averages
+ema9_len = input.int(9, "EMA 9 Length", minval=1, group="Moving Averages")
+ema20_len = input.int(20, "EMA 20 Length", minval=1, group="Moving Averages")
+ema50_len = input.int(50, "EMA 50 Length", minval=1, group="Moving Averages")
+ema200_len = input.int(200, "EMA 200 Length", minval=1, group="Moving Averages")
+
+// Oscillators
+rsi_len = input.int(14, "RSI Length", minval=1, group="Oscillators")
+rsi_overbought = input.int(70, "RSI Overbought", minval=50, maxval=100, group="Oscillators")
+rsi_oversold = input.int(30, "RSI Oversold", minval=0, maxval=50, group="Oscillators")
+
+stoch_k = input.int(14, "Stochastic %K", minval=1, group="Oscillators")
+stoch_d = input.int(3, "Stochastic %D", minval=1, group="Oscillators")
+stoch_overbought = input.int(80, "Stochastic Overbought", minval=50, maxval=100, group="Oscillators")
+stoch_oversold = input.int(20, "Stochastic Oversold", minval=0, maxval=50, group="Oscillators")
+
+// MACD
+macd_fast = input.int(12, "MACD Fast Length", minval=1, group="MACD")
+macd_slow = input.int(26, "MACD Slow Length", minval=1, group="MACD")
+macd_signal = input.int(9, "MACD Signal Length", minval=1, group="MACD")
+
+// Bollinger Bands
+bb_len = input.int(20, "Bollinger Bands Length", minval=1, group="Bollinger Bands")
+bb_mult = input.float(2.0, "Bollinger Bands Multiplier", minval=0.1, group="Bollinger Bands")
+
+// ATR
+atr_len = input.int(14, "ATR Length", minval=1, group="Risk Management")
+atr_mult = input.float(2.0, "ATR Multiplier for Stop Loss", minval=0.1, group="Risk Management")
+
+// ADX
+adx_len = input.int(14, "ADX Length", minval=1, group="Trend Strength")
+adx_threshold = input.int(25, "ADX Trend Threshold", minval=1, group="Trend Strength")
+
+// Signal Settings
+signal_threshold = input.int(5, "Minimum Signal Score", minval=1, maxval=7, group="Signal Settings")
+show_signals = input.bool(true, "Show Buy/Sell Signals", group="Signal Settings")
+show_emas = input.bool(true, "Show EMAs", group="Display Settings")
+show_bb = input.bool(true, "Show Bollinger Bands", group="Display Settings")
+
+// ==========================================
+// TECHNICAL INDICATORS CALCULATION
+// ==========================================
+
+// Moving Averages
+ema9 = ta.ema(close, ema9_len)
+ema20 = ta.ema(close, ema20_len)
+ema50 = ta.ema(close, ema50_len)
+ema200 = ta.ema(close, ema200_len)
+
+// RSI
+rsi = ta.rsi(close, rsi_len)
+
+// Stochastic
+stoch_k_val = ta.stoch(close, high, low, stoch_k)
+stoch_d_val = ta.sma(stoch_k_val, stoch_d)
+
+// MACD
+[macd_line, macd_signal_line, macd_histogram] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+
+// Bollinger Bands
+bb_basis = ta.sma(close, bb_len)
+bb_dev = bb_mult * ta.stdev(close, bb_len)
+bb_upper = bb_basis + bb_dev
+bb_lower = bb_basis - bb_dev
+
+// ATR
+atr = ta.atr(atr_len)
+
+// ADX
+[adx_val, di_plus, di_minus] = ta.adx(adx_len)
+
+// Williams %R
+williams_r = ta.wpr(14)
+
+// Volume indicators
+volume_sma = ta.sma(volume, 20)
+volume_ratio = volume / volume_sma
+
+// ==========================================
+// TREND ANALYSIS
+// ==========================================
+
+// Primary trend (200 EMA)
+long_term_trend = close > ema200
+short_term_trend = ema50 > ema200
+
+// Price momentum
+price_momentum = close > ema20 and ema20 > ema50
+
+// Volume confirmation
+volume_confirmation = volume_ratio > 1.2
+
+// ==========================================
+// SIGNAL SCORING SYSTEM
+// ==========================================
+
+// Bull Signal Components
+bull_score = 0
+bull_score := bull_score + (long_term_trend ? 1 : 0)
+bull_score := bull_score + (short_term_trend ? 1 : 0)
+bull_score := bull_score + (rsi > 50 and rsi < rsi_overbought ? 1 : 0)
+bull_score := bull_score + (macd_line > macd_signal_line ? 1 : 0)
+bull_score := bull_score + (adx_val > adx_threshold ? 1 : 0)
+bull_score := bull_score + (close > bb_basis ? 1 : 0)
+bull_score := bull_score + (volume_confirmation ? 1 : 0)
+
+// Bear Signal Components
+bear_score = 0
+bear_score := bear_score + (not long_term_trend ? 1 : 0)
+bear_score := bear_score + (not short_term_trend ? 1 : 0)
+bear_score := bear_score + (rsi < 50 and rsi > rsi_oversold ? 1 : 0)
+bear_score := bear_score + (macd_line < macd_signal_line ? 1 : 0)
+bear_score := bear_score + (adx_val > adx_threshold ? 1 : 0)
+bear_score := bear_score + (close < bb_basis ? 1 : 0)
+bear_score := bear_score + (volume_confirmation ? 1 : 0)
+
+// Signal Generation
+buy_signal = bull_score >= signal_threshold and bull_score > bear_score
+sell_signal = bear_score >= signal_threshold and bear_score > bull_score
+
+// Avoid signals in ranging market
+ranging_market = adx_val < adx_threshold
+buy_signal := buy_signal and not ranging_market
+sell_signal := sell_signal and not ranging_market
+
+// ==========================================
+// RISK MANAGEMENT
+// ==========================================
+
+// Dynamic Stop Loss based on ATR
+stop_loss_distance = atr * atr_mult
+buy_stop_loss = close - stop_loss_distance
+sell_stop_loss = close + stop_loss_distance
+
+// Take Profit (2:1 Risk-Reward)
+buy_take_profit = close + (stop_loss_distance * 2)
+sell_take_profit = close - (stop_loss_distance * 2)
+
+// ==========================================
+// PLOTTING
+// ==========================================
+
+// EMAs
+plot(show_emas ? ema9 : na, "EMA 9", color=color.blue, linewidth=1)
+plot(show_emas ? ema20 : na, "EMA 20", color=color.orange, linewidth=1)
+plot(show_emas ? ema50 : na, "EMA 50", color=color.red, linewidth=2)
+plot(show_emas ? ema200 : na, "EMA 200", color=color.purple, linewidth=2)
+
+// Bollinger Bands
+bb_upper_plot = plot(show_bb ? bb_upper : na, "BB Upper", color=color.gray, linewidth=1)
+bb_lower_plot = plot(show_bb ? bb_lower : na, "BB Lower", color=color.gray, linewidth=1)
+bb_basis_plot = plot(show_bb ? bb_basis : na, "BB Basis", color=color.gray, linewidth=1, style=plot.style_linebr)
+fill(bb_upper_plot, bb_lower_plot, color=color.new(color.gray, 95), title="BB Background")
+
+// Signals
+plotshape(show_signals and buy_signal, title="Buy Signal", style=shape.labelup, location=location.belowbar, color=color.green, textcolor=color.white, text="BUY\n" + str.tostring(bull_score), size=size.small)
+plotshape(show_signals and sell_signal, title="Sell Signal", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, text="SELL\n" + str.tostring(bear_score), size=size.small)
+
+// ==========================================
+// ALERTS
+// ==========================================
+
+// Buy Alert
+if buy_signal
+    alert("XAUUSD Buy Signal - Score: " + str.tostring(bull_score) + " | Price: " + str.tostring(close) + " | SL: " + str.tostring(buy_stop_loss) + " | TP: " + str.tostring(buy_take_profit), alert.freq_once_per_bar)
+
+// Sell Alert
+if sell_signal
+    alert("XAUUSD Sell Signal - Score: " + str.tostring(bear_score) + " | Price: " + str.tostring(close) + " | SL: " + str.tostring(sell_stop_loss) + " | TP: " + str.tostring(sell_take_profit), alert.freq_once_per_bar)
+
+// ==========================================
+// TABLE - SIGNAL DASHBOARD
+// ==========================================
+
+if barstate.islast
+    var table signal_table = table.new(position.top_right, 2, 8, bgcolor=color.white, border_width=1)
+    
+    table.cell(signal_table, 0, 0, "Indicator", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+    table.cell(signal_table, 1, 0, "Status", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+    
+    table.cell(signal_table, 0, 1, "Trend (200 EMA)", text_size=size.small)
+    table.cell(signal_table, 1, 1, long_term_trend ? "Bullish" : "Bearish", 
+               bgcolor=long_term_trend ? color.green : color.red, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(signal_table, 0, 2, "RSI", text_size=size.small)
+    table.cell(signal_table, 1, 2, str.tostring(math.round(rsi, 1)), 
+               bgcolor=rsi > 70 ? color.red : rsi < 30 ? color.green : color.gray, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(signal_table, 0, 3, "MACD", text_size=size.small)
+    table.cell(signal_table, 1, 3, macd_line > macd_signal_line ? "Bullish" : "Bearish", 
+               bgcolor=macd_line > macd_signal_line ? color.green : color.red, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(signal_table, 0, 4, "ADX", text_size=size.small)
+    table.cell(signal_table, 1, 4, str.tostring(math.round(adx_val, 1)), 
+               bgcolor=adx_val > adx_threshold ? color.green : color.red, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(signal_table, 0, 5, "Bull Score", text_size=size.small)
+    table.cell(signal_table, 1, 5, str.tostring(bull_score) + "/7", 
+               bgcolor=bull_score >= signal_threshold ? color.green : color.gray, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(signal_table, 0, 6, "Bear Score", text_size=size.small)
+    table.cell(signal_table, 1, 6, str.tostring(bear_score) + "/7", 
+               bgcolor=bear_score >= signal_threshold ? color.red : color.gray, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(signal_table, 0, 7, "Signal", text_size=size.small)
+    signal_text = buy_signal ? "BUY" : sell_signal ? "SELL" : "HOLD"
+    signal_color = buy_signal ? color.green : sell_signal ? color.red : color.gray
+    table.cell(signal_table, 1, 7, signal_text, 
+               bgcolor=signal_color, text_color=color.white, text_size=size.small)

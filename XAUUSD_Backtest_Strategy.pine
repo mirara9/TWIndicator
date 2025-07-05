@@ -1,0 +1,286 @@
+//@version=5
+strategy("XAUUSD Master Strategy - Backtest", shorttitle="XAUUSD BT", overlay=true, 
+         default_qty_type=strategy.percent_of_equity, default_qty_value=10, 
+         commission_type=strategy.commission.percent, commission_value=0.1,
+         slippage=2, max_bars_back=5000)
+
+// ==========================================
+// BACKTEST SETTINGS
+// ==========================================
+
+// Date Range
+start_date = input.time(timestamp("2014-01-01 00:00"), "Start Date", group="Backtest Settings")
+end_date = input.time(timestamp("2024-12-31 23:59"), "End Date", group="Backtest Settings")
+
+// Position Settings
+position_size = input.float(10.0, "Position Size (%)", minval=1.0, maxval=100.0, group="Position Management")
+risk_per_trade = input.float(2.0, "Risk Per Trade (%)", minval=0.1, maxval=10.0, group="Position Management")
+max_drawdown = input.float(20.0, "Max Drawdown (%)", minval=5.0, maxval=50.0, group="Position Management")
+
+// Risk Management
+use_stop_loss = input.bool(true, "Use Stop Loss", group="Risk Management")
+use_take_profit = input.bool(true, "Use Take Profit", group="Risk Management")
+risk_reward_ratio = input.float(2.0, "Risk:Reward Ratio", minval=1.0, maxval=5.0, group="Risk Management")
+
+// Trading Sessions
+trade_asian = input.bool(false, "Trade Asian Session", group="Trading Sessions")
+trade_london = input.bool(true, "Trade London Session", group="Trading Sessions")
+trade_newyork = input.bool(true, "Trade New York Session", group="Trading Sessions")
+
+// ==========================================
+// INDICATOR PARAMETERS (Same as main indicator)
+// ==========================================
+
+// Moving Averages
+ema9_len = input.int(9, "EMA 9 Length", minval=1, group="Moving Averages")
+ema20_len = input.int(20, "EMA 20 Length", minval=1, group="Moving Averages")
+ema50_len = input.int(50, "EMA 50 Length", minval=1, group="Moving Averages")
+ema200_len = input.int(200, "EMA 200 Length", minval=1, group="Moving Averages")
+
+// Oscillators
+rsi_len = input.int(14, "RSI Length", minval=1, group="Oscillators")
+rsi_overbought = input.int(70, "RSI Overbought", minval=50, maxval=100, group="Oscillators")
+rsi_oversold = input.int(30, "RSI Oversold", minval=0, maxval=50, group="Oscillators")
+
+// MACD
+macd_fast = input.int(12, "MACD Fast Length", minval=1, group="MACD")
+macd_slow = input.int(26, "MACD Slow Length", minval=1, group="MACD")
+macd_signal = input.int(9, "MACD Signal Length", minval=1, group="MACD")
+
+// Bollinger Bands
+bb_len = input.int(20, "Bollinger Bands Length", minval=1, group="Bollinger Bands")
+bb_mult = input.float(2.0, "Bollinger Bands Multiplier", minval=0.1, group="Bollinger Bands")
+
+// ATR
+atr_len = input.int(14, "ATR Length", minval=1, group="ATR")
+atr_mult = input.float(2.0, "ATR Multiplier", minval=0.1, group="ATR")
+
+// ADX
+adx_len = input.int(14, "ADX Length", minval=1, group="ADX")
+adx_threshold = input.int(25, "ADX Threshold", minval=1, group="ADX")
+
+// Signal Settings
+signal_threshold = input.int(5, "Signal Threshold", minval=1, maxval=7, group="Signal Settings")
+
+// ==========================================
+// TECHNICAL INDICATORS (Same calculations)
+// ==========================================
+
+// Moving Averages
+ema9 = ta.ema(close, ema9_len)
+ema20 = ta.ema(close, ema20_len)
+ema50 = ta.ema(close, ema50_len)
+ema200 = ta.ema(close, ema200_len)
+
+// RSI
+rsi = ta.rsi(close, rsi_len)
+
+// MACD
+[macd_line, macd_signal_line, macd_histogram] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+
+// Bollinger Bands
+bb_basis = ta.sma(close, bb_len)
+bb_dev = bb_mult * ta.stdev(close, bb_len)
+bb_upper = bb_basis + bb_dev
+bb_lower = bb_basis - bb_dev
+
+// ATR
+atr = ta.atr(atr_len)
+
+// ADX
+[adx_val, di_plus, di_minus] = ta.adx(adx_len)
+
+// Volume
+volume_sma = ta.sma(volume, 20)
+volume_ratio = volume / volume_sma
+
+// ==========================================
+// TRADING SESSIONS
+// ==========================================
+
+// Session times (GMT)
+asian_session = time(timeframe.period, "0200-0800", "UTC")
+london_session = time(timeframe.period, "0800-1700", "UTC")
+newyork_session = time(timeframe.period, "1300-2200", "UTC")
+
+// Check if current time is in allowed trading sessions
+in_session = (trade_asian and not na(asian_session)) or 
+             (trade_london and not na(london_session)) or 
+             (trade_newyork and not na(newyork_session))
+
+// ==========================================
+// SIGNAL LOGIC (Same as main indicator)
+// ==========================================
+
+// Trend Analysis
+long_term_trend = close > ema200
+short_term_trend = ema50 > ema200
+volume_confirmation = volume_ratio > 1.2
+
+// Bull Signal Components
+bull_score = 0
+bull_score := bull_score + (long_term_trend ? 1 : 0)
+bull_score := bull_score + (short_term_trend ? 1 : 0)
+bull_score := bull_score + (rsi > 50 and rsi < rsi_overbought ? 1 : 0)
+bull_score := bull_score + (macd_line > macd_signal_line ? 1 : 0)
+bull_score := bull_score + (adx_val > adx_threshold ? 1 : 0)
+bull_score := bull_score + (close > bb_basis ? 1 : 0)
+bull_score := bull_score + (volume_confirmation ? 1 : 0)
+
+// Bear Signal Components
+bear_score = 0
+bear_score := bear_score + (not long_term_trend ? 1 : 0)
+bear_score := bear_score + (not short_term_trend ? 1 : 0)
+bear_score := bear_score + (rsi < 50 and rsi > rsi_oversold ? 1 : 0)
+bear_score := bear_score + (macd_line < macd_signal_line ? 1 : 0)
+bear_score := bear_score + (adx_val > adx_threshold ? 1 : 0)
+bear_score := bear_score + (close < bb_basis ? 1 : 0)
+bear_score := bear_score + (volume_confirmation ? 1 : 0)
+
+// Signal Generation
+buy_signal = bull_score >= signal_threshold and bull_score > bear_score and in_session
+sell_signal = bear_score >= signal_threshold and bear_score > bull_score and in_session
+
+// Avoid signals in ranging market
+ranging_market = adx_val < adx_threshold
+buy_signal := buy_signal and not ranging_market
+sell_signal := sell_signal and not ranging_market
+
+// ==========================================
+// POSITION SIZING & RISK MANAGEMENT
+// ==========================================
+
+// Calculate position size based on risk per trade
+stop_loss_distance = atr * atr_mult
+account_value = strategy.equity
+risk_amount = account_value * (risk_per_trade / 100)
+
+// Position size calculation
+position_size_calc = risk_amount / stop_loss_distance
+
+// Calculate Stop Loss and Take Profit levels
+long_stop_loss = close - stop_loss_distance
+long_take_profit = close + (stop_loss_distance * risk_reward_ratio)
+short_stop_loss = close + stop_loss_distance
+short_take_profit = close - (stop_loss_distance * risk_reward_ratio)
+
+// ==========================================
+// STRATEGY EXECUTION
+// ==========================================
+
+// Date filter
+in_date_range = time >= start_date and time <= end_date
+
+// Entry conditions
+long_condition = buy_signal and in_date_range and strategy.position_size == 0
+short_condition = sell_signal and in_date_range and strategy.position_size == 0
+
+// Maximum drawdown check
+current_drawdown = (strategy.equity - strategy.max_equity) / strategy.max_equity * 100
+drawdown_ok = current_drawdown > -max_drawdown
+
+// Execute trades
+if long_condition and drawdown_ok
+    strategy.entry("Long", strategy.long, qty=position_size_calc)
+    if use_stop_loss
+        strategy.exit("Long Exit", "Long", stop=long_stop_loss, limit=use_take_profit ? long_take_profit : na)
+
+if short_condition and drawdown_ok
+    strategy.entry("Short", strategy.short, qty=position_size_calc)
+    if use_stop_loss
+        strategy.exit("Short Exit", "Short", stop=short_stop_loss, limit=use_take_profit ? short_take_profit : na)
+
+// ==========================================
+// PLOTTING
+// ==========================================
+
+// EMAs
+plot(ema9, "EMA 9", color=color.blue, linewidth=1)
+plot(ema20, "EMA 20", color=color.orange, linewidth=1)
+plot(ema50, "EMA 50", color=color.red, linewidth=2)
+plot(ema200, "EMA 200", color=color.purple, linewidth=2)
+
+// Bollinger Bands
+plot(bb_upper, "BB Upper", color=color.gray, linewidth=1)
+plot(bb_lower, "BB Lower", color=color.gray, linewidth=1)
+plot(bb_basis, "BB Basis", color=color.gray, linewidth=1, style=plot.style_linebr)
+
+// Entry points
+plotshape(long_condition, title="Long Entry", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(short_condition, title="Short Entry", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+
+// Stop Loss and Take Profit levels
+plot(strategy.position_size > 0 ? long_stop_loss : na, "Long SL", color=color.red, linewidth=2, style=plot.style_linebr)
+plot(strategy.position_size > 0 ? long_take_profit : na, "Long TP", color=color.green, linewidth=2, style=plot.style_linebr)
+plot(strategy.position_size < 0 ? short_stop_loss : na, "Short SL", color=color.red, linewidth=2, style=plot.style_linebr)
+plot(strategy.position_size < 0 ? short_take_profit : na, "Short TP", color=color.green, linewidth=2, style=plot.style_linebr)
+
+// ==========================================
+// PERFORMANCE METRICS TABLE
+// ==========================================
+
+if barstate.islast
+    var table performance_table = table.new(position.top_left, 2, 12, bgcolor=color.white, border_width=1)
+    
+    // Headers
+    table.cell(performance_table, 0, 0, "Metric", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+    table.cell(performance_table, 1, 0, "Value", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+    
+    // Performance metrics
+    total_trades = strategy.closedtrades
+    winning_trades = strategy.wintrades
+    losing_trades = strategy.losstrades
+    win_rate = total_trades > 0 ? winning_trades / total_trades * 100 : 0
+    
+    profit_factor = strategy.grossprofit / math.max(strategy.grossloss, 1)
+    max_dd = strategy.max_drawdown
+    sharpe_ratio = total_trades > 0 ? strategy.sharpe_ratio : 0
+    
+    // Fill table
+    table.cell(performance_table, 0, 1, "Total Trades", text_size=size.small)
+    table.cell(performance_table, 1, 1, str.tostring(total_trades), text_size=size.small)
+    
+    table.cell(performance_table, 0, 2, "Win Rate", text_size=size.small)
+    table.cell(performance_table, 1, 2, str.tostring(math.round(win_rate, 2)) + "%", 
+               bgcolor=win_rate >= 50 ? color.green : color.red, text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 3, "Profit Factor", text_size=size.small)
+    table.cell(performance_table, 1, 3, str.tostring(math.round(profit_factor, 2)), 
+               bgcolor=profit_factor >= 1.5 ? color.green : profit_factor >= 1.0 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 4, "Max Drawdown", text_size=size.small)
+    table.cell(performance_table, 1, 4, str.tostring(math.round(max_dd, 2)) + "%", 
+               bgcolor=max_dd <= 10 ? color.green : max_dd <= 20 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 5, "Net Profit", text_size=size.small)
+    table.cell(performance_table, 1, 5, str.tostring(math.round(strategy.netprofit, 2)), 
+               bgcolor=strategy.netprofit > 0 ? color.green : color.red, text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 6, "Sharpe Ratio", text_size=size.small)
+    table.cell(performance_table, 1, 6, str.tostring(math.round(sharpe_ratio, 2)), 
+               bgcolor=sharpe_ratio >= 1.0 ? color.green : sharpe_ratio >= 0.5 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    
+    // Current signal status
+    table.cell(performance_table, 0, 7, "Bull Score", text_size=size.small)
+    table.cell(performance_table, 1, 7, str.tostring(bull_score) + "/7", 
+               bgcolor=bull_score >= signal_threshold ? color.green : color.gray, text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 8, "Bear Score", text_size=size.small)
+    table.cell(performance_table, 1, 8, str.tostring(bear_score) + "/7", 
+               bgcolor=bear_score >= signal_threshold ? color.red : color.gray, text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 9, "ADX", text_size=size.small)
+    table.cell(performance_table, 1, 9, str.tostring(math.round(adx_val, 1)), 
+               bgcolor=adx_val > adx_threshold ? color.green : color.red, text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 10, "RSI", text_size=size.small)
+    table.cell(performance_table, 1, 10, str.tostring(math.round(rsi, 1)), 
+               bgcolor=rsi > 70 ? color.red : rsi < 30 ? color.green : color.gray, text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 11, "Current Signal", text_size=size.small)
+    current_signal = long_condition ? "BUY" : short_condition ? "SELL" : "HOLD"
+    signal_color = long_condition ? color.green : short_condition ? color.red : color.gray
+    table.cell(performance_table, 1, 11, current_signal, bgcolor=signal_color, text_color=color.white, text_size=size.small)

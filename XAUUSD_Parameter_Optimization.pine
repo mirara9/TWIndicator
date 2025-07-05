@@ -1,0 +1,292 @@
+//@version=5
+strategy("XAUUSD Parameter Optimization", shorttitle="XAUUSD Opt", overlay=true, 
+         default_qty_type=strategy.percent_of_equity, default_qty_value=10,
+         commission_type=strategy.commission.percent, commission_value=0.1,
+         max_bars_back=5000)
+
+// ==========================================
+// OPTIMIZATION PARAMETERS
+// ==========================================
+
+// Moving Average Optimization
+ema_fast = input.int(9, "EMA Fast", minval=5, maxval=20, step=1, group="EMA Optimization")
+ema_medium = input.int(20, "EMA Medium", minval=15, maxval=30, step=1, group="EMA Optimization")
+ema_slow = input.int(50, "EMA Slow", minval=40, maxval=70, step=5, group="EMA Optimization")
+ema_trend = input.int(200, "EMA Trend", minval=150, maxval=250, step=10, group="EMA Optimization")
+
+// RSI Optimization
+rsi_period = input.int(14, "RSI Period", minval=10, maxval=21, step=1, group="RSI Optimization")
+rsi_ob_level = input.int(70, "RSI Overbought", minval=65, maxval=80, step=1, group="RSI Optimization")
+rsi_os_level = input.int(30, "RSI Oversold", minval=20, maxval=35, step=1, group="RSI Optimization")
+
+// MACD Optimization
+macd_fast_opt = input.int(12, "MACD Fast", minval=8, maxval=16, step=1, group="MACD Optimization")
+macd_slow_opt = input.int(26, "MACD Slow", minval=20, maxval=35, step=1, group="MACD Optimization")
+macd_signal_opt = input.int(9, "MACD Signal", minval=6, maxval=12, step=1, group="MACD Optimization")
+
+// Bollinger Bands Optimization
+bb_period = input.int(20, "BB Period", minval=15, maxval=30, step=1, group="BB Optimization")
+bb_deviation = input.float(2.0, "BB Deviation", minval=1.5, maxval=2.5, step=0.1, group="BB Optimization")
+
+// ATR Optimization
+atr_period = input.int(14, "ATR Period", minval=10, maxval=21, step=1, group="ATR Optimization")
+atr_multiplier = input.float(2.0, "ATR Multiplier", minval=1.5, maxval=3.0, step=0.1, group="ATR Optimization")
+
+// ADX Optimization
+adx_period = input.int(14, "ADX Period", minval=10, maxval=21, step=1, group="ADX Optimization")
+adx_trend_threshold = input.int(25, "ADX Threshold", minval=20, maxval=35, step=1, group="ADX Optimization")
+
+// Signal Optimization
+signal_min_score = input.int(5, "Min Signal Score", minval=4, maxval=7, step=1, group="Signal Optimization")
+risk_reward = input.float(2.0, "Risk:Reward", minval=1.5, maxval=3.0, step=0.1, group="Signal Optimization")
+
+// ==========================================
+// OPTIMIZED INDICATORS
+// ==========================================
+
+// Moving Averages
+ema_f = ta.ema(close, ema_fast)
+ema_m = ta.ema(close, ema_medium)
+ema_s = ta.ema(close, ema_slow)
+ema_t = ta.ema(close, ema_trend)
+
+// RSI
+rsi_opt = ta.rsi(close, rsi_period)
+
+// MACD
+[macd_line_opt, macd_signal_line_opt, macd_histogram_opt] = ta.macd(close, macd_fast_opt, macd_slow_opt, macd_signal_opt)
+
+// Bollinger Bands
+bb_basis_opt = ta.sma(close, bb_period)
+bb_dev_opt = bb_deviation * ta.stdev(close, bb_period)
+bb_upper_opt = bb_basis_opt + bb_dev_opt
+bb_lower_opt = bb_basis_opt - bb_dev_opt
+
+// ATR
+atr_opt = ta.atr(atr_period)
+
+// ADX
+[adx_opt, di_plus_opt, di_minus_opt] = ta.adx(adx_period)
+
+// Volume
+volume_sma_opt = ta.sma(volume, 20)
+volume_ratio_opt = volume / volume_sma_opt
+
+// ==========================================
+// OPTIMIZED SIGNAL LOGIC
+// ==========================================
+
+// Trend Analysis
+long_term_trend_opt = close > ema_t
+medium_term_trend_opt = ema_s > ema_t
+short_term_trend_opt = ema_m > ema_s
+price_momentum_opt = close > ema_f
+
+// Volume confirmation
+volume_confirmation_opt = volume_ratio_opt > 1.2
+
+// Bull Signal Components (Enhanced)
+bull_score_opt = 0
+bull_score_opt := bull_score_opt + (long_term_trend_opt ? 1 : 0)
+bull_score_opt := bull_score_opt + (medium_term_trend_opt ? 1 : 0)
+bull_score_opt := bull_score_opt + (short_term_trend_opt ? 1 : 0)
+bull_score_opt := bull_score_opt + (rsi_opt > 50 and rsi_opt < rsi_ob_level ? 1 : 0)
+bull_score_opt := bull_score_opt + (macd_line_opt > macd_signal_line_opt ? 1 : 0)
+bull_score_opt := bull_score_opt + (adx_opt > adx_trend_threshold ? 1 : 0)
+bull_score_opt := bull_score_opt + (close > bb_basis_opt ? 1 : 0)
+bull_score_opt := bull_score_opt + (volume_confirmation_opt ? 1 : 0)
+
+// Bear Signal Components (Enhanced)
+bear_score_opt = 0
+bear_score_opt := bear_score_opt + (not long_term_trend_opt ? 1 : 0)
+bear_score_opt := bear_score_opt + (not medium_term_trend_opt ? 1 : 0)
+bear_score_opt := bear_score_opt + (not short_term_trend_opt ? 1 : 0)
+bear_score_opt := bear_score_opt + (rsi_opt < 50 and rsi_opt > rsi_os_level ? 1 : 0)
+bear_score_opt := bear_score_opt + (macd_line_opt < macd_signal_line_opt ? 1 : 0)
+bear_score_opt := bear_score_opt + (adx_opt > adx_trend_threshold ? 1 : 0)
+bear_score_opt := bear_score_opt + (close < bb_basis_opt ? 1 : 0)
+bear_score_opt := bear_score_opt + (volume_confirmation_opt ? 1 : 0)
+
+// Signal Generation
+buy_signal_opt = bull_score_opt >= signal_min_score and bull_score_opt > bear_score_opt
+sell_signal_opt = bear_score_opt >= signal_min_score and bear_score_opt > bull_score_opt
+
+// Avoid signals in ranging market
+ranging_market_opt = adx_opt < adx_trend_threshold
+buy_signal_opt := buy_signal_opt and not ranging_market_opt
+sell_signal_opt := sell_signal_opt and not ranging_market_opt
+
+// ==========================================
+// RISK MANAGEMENT
+// ==========================================
+
+// Dynamic Stop Loss
+stop_loss_distance_opt = atr_opt * atr_multiplier
+
+// Position sizing
+account_value = strategy.equity
+risk_per_trade = 2.0 // 2% risk per trade
+risk_amount = account_value * (risk_per_trade / 100)
+position_size_calc = risk_amount / stop_loss_distance_opt
+
+// Stop Loss and Take Profit
+long_stop_loss_opt = close - stop_loss_distance_opt
+long_take_profit_opt = close + (stop_loss_distance_opt * risk_reward)
+short_stop_loss_opt = close + stop_loss_distance_opt
+short_take_profit_opt = close - (stop_loss_distance_opt * risk_reward)
+
+// ==========================================
+// STRATEGY EXECUTION
+// ==========================================
+
+// Entry conditions
+long_condition_opt = buy_signal_opt and strategy.position_size == 0
+short_condition_opt = sell_signal_opt and strategy.position_size == 0
+
+// Execute trades
+if long_condition_opt
+    strategy.entry("Long", strategy.long, qty=position_size_calc)
+    strategy.exit("Long Exit", "Long", stop=long_stop_loss_opt, limit=long_take_profit_opt)
+
+if short_condition_opt
+    strategy.entry("Short", strategy.short, qty=position_size_calc)
+    strategy.exit("Short Exit", "Short", stop=short_stop_loss_opt, limit=short_take_profit_opt)
+
+// ==========================================
+// PLOTTING
+// ==========================================
+
+// EMAs
+plot(ema_f, "EMA Fast", color=color.blue, linewidth=1)
+plot(ema_m, "EMA Medium", color=color.orange, linewidth=1)
+plot(ema_s, "EMA Slow", color=color.red, linewidth=2)
+plot(ema_t, "EMA Trend", color=color.purple, linewidth=2)
+
+// Bollinger Bands
+plot(bb_upper_opt, "BB Upper", color=color.gray, linewidth=1)
+plot(bb_lower_opt, "BB Lower", color=color.gray, linewidth=1)
+
+// Entry points
+plotshape(long_condition_opt, title="Long Entry", style=shape.triangleup, 
+          location=location.belowbar, color=color.green, size=size.small)
+plotshape(short_condition_opt, title="Short Entry", style=shape.triangledown, 
+          location=location.abovebar, color=color.red, size=size.small)
+
+// ==========================================
+// OPTIMIZATION RESULTS TABLE
+// ==========================================
+
+if barstate.islast
+    var table opt_table = table.new(position.bottom_right, 2, 10, bgcolor=color.white, border_width=1)
+    
+    // Calculate performance metrics
+    total_trades = strategy.closedtrades
+    winning_trades = strategy.wintrades
+    win_rate = total_trades > 0 ? winning_trades / total_trades * 100 : 0
+    profit_factor = strategy.grossprofit / math.max(strategy.grossloss, 1)
+    max_drawdown = strategy.max_drawdown
+    
+    // Calculate Sharpe-like ratio
+    returns = strategy.netprofit / strategy.initial_capital * 100
+    sharpe_approx = returns / math.max(max_drawdown, 1)
+    
+    // Calculate trade frequency
+    bars_total = bar_index + 1
+    trade_frequency = total_trades / bars_total * 1000 // per 1000 bars
+    
+    // Score the parameter set (higher is better)
+    optimization_score = 0
+    optimization_score := optimization_score + (win_rate >= 50 ? 20 : 0)
+    optimization_score := optimization_score + (profit_factor >= 1.5 ? 25 : profit_factor >= 1.2 ? 15 : 0)
+    optimization_score := optimization_score + (max_drawdown <= 10 ? 20 : max_drawdown <= 15 ? 10 : 0)
+    optimization_score := optimization_score + (returns > 0 ? 15 : 0)
+    optimization_score := optimization_score + (total_trades >= 10 ? 10 : total_trades >= 5 ? 5 : 0)
+    optimization_score := optimization_score + (sharpe_approx >= 2 ? 10 : sharpe_approx >= 1 ? 5 : 0)
+    
+    // Headers
+    table.cell(opt_table, 0, 0, "Optimization Results", bgcolor=color.navy, text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 1, 0, "Value", bgcolor=color.navy, text_color=color.white, text_size=size.small)
+    
+    // Results
+    table.cell(opt_table, 0, 1, "Total Trades", text_size=size.small)
+    table.cell(opt_table, 1, 1, str.tostring(total_trades), text_size=size.small)
+    
+    table.cell(opt_table, 0, 2, "Win Rate", text_size=size.small)
+    table.cell(opt_table, 1, 2, str.tostring(math.round(win_rate, 1)) + "%", 
+               bgcolor=win_rate >= 50 ? color.green : color.red, text_color=color.white, text_size=size.small)
+    
+    table.cell(opt_table, 0, 3, "Profit Factor", text_size=size.small)
+    table.cell(opt_table, 1, 3, str.tostring(math.round(profit_factor, 2)), 
+               bgcolor=profit_factor >= 1.5 ? color.green : profit_factor >= 1.2 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(opt_table, 0, 4, "Max DD", text_size=size.small)
+    table.cell(opt_table, 1, 4, str.tostring(math.round(max_drawdown, 1)) + "%", 
+               bgcolor=max_drawdown <= 10 ? color.green : max_drawdown <= 15 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(opt_table, 0, 5, "Net Profit", text_size=size.small)
+    table.cell(opt_table, 1, 5, str.tostring(math.round(strategy.netprofit, 0)), 
+               bgcolor=strategy.netprofit > 0 ? color.green : color.red, text_color=color.white, text_size=size.small)
+    
+    table.cell(opt_table, 0, 6, "Returns", text_size=size.small)
+    table.cell(opt_table, 1, 6, str.tostring(math.round(returns, 1)) + "%", 
+               bgcolor=returns > 0 ? color.green : color.red, text_color=color.white, text_size=size.small)
+    
+    table.cell(opt_table, 0, 7, "Trade Freq", text_size=size.small)
+    table.cell(opt_table, 1, 7, str.tostring(math.round(trade_frequency, 1)) + "/1k", text_size=size.small)
+    
+    table.cell(opt_table, 0, 8, "Sharpe Approx", text_size=size.small)
+    table.cell(opt_table, 1, 8, str.tostring(math.round(sharpe_approx, 2)), 
+               bgcolor=sharpe_approx >= 2 ? color.green : sharpe_approx >= 1 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(opt_table, 0, 9, "Opt Score", text_size=size.small)
+    table.cell(opt_table, 1, 9, str.tostring(optimization_score) + "/100", 
+               bgcolor=optimization_score >= 70 ? color.green : optimization_score >= 50 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+
+// ==========================================
+// PARAMETER SUMMARY TABLE
+// ==========================================
+
+if barstate.islast
+    var table param_table = table.new(position.top_left, 2, 12, bgcolor=color.white, border_width=1)
+    
+    // Headers
+    table.cell(param_table, 0, 0, "Parameter", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+    table.cell(param_table, 1, 0, "Value", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+    
+    // Parameters
+    table.cell(param_table, 0, 1, "EMA Fast", text_size=size.small)
+    table.cell(param_table, 1, 1, str.tostring(ema_fast), text_size=size.small)
+    
+    table.cell(param_table, 0, 2, "EMA Medium", text_size=size.small)
+    table.cell(param_table, 1, 2, str.tostring(ema_medium), text_size=size.small)
+    
+    table.cell(param_table, 0, 3, "EMA Slow", text_size=size.small)
+    table.cell(param_table, 1, 3, str.tostring(ema_slow), text_size=size.small)
+    
+    table.cell(param_table, 0, 4, "RSI Period", text_size=size.small)
+    table.cell(param_table, 1, 4, str.tostring(rsi_period), text_size=size.small)
+    
+    table.cell(param_table, 0, 5, "MACD Fast", text_size=size.small)
+    table.cell(param_table, 1, 5, str.tostring(macd_fast_opt), text_size=size.small)
+    
+    table.cell(param_table, 0, 6, "MACD Slow", text_size=size.small)
+    table.cell(param_table, 1, 6, str.tostring(macd_slow_opt), text_size=size.small)
+    
+    table.cell(param_table, 0, 7, "BB Period", text_size=size.small)
+    table.cell(param_table, 1, 7, str.tostring(bb_period), text_size=size.small)
+    
+    table.cell(param_table, 0, 8, "ATR Period", text_size=size.small)
+    table.cell(param_table, 1, 8, str.tostring(atr_period), text_size=size.small)
+    
+    table.cell(param_table, 0, 9, "ATR Mult", text_size=size.small)
+    table.cell(param_table, 1, 9, str.tostring(atr_multiplier), text_size=size.small)
+    
+    table.cell(param_table, 0, 10, "Min Score", text_size=size.small)
+    table.cell(param_table, 1, 10, str.tostring(signal_min_score), text_size=size.small)
+    
+    table.cell(param_table, 0, 11, "Risk:Reward", text_size=size.small)
+    table.cell(param_table, 1, 11, str.tostring(risk_reward), text_size=size.small)
