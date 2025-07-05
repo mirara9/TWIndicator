@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XAUUSD Live Trading Chart</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <h1 class="logo">XAUUSD Live Chart</h1>
+                <div class="symbol-info">
+                    <span class="symbol">XAUUSD</span>
+                    <span class="price" id="current-price">Loading...</span>
+                    <span class="change" id="price-change">+0.00 (0.00%)</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="market-status">
+                    <span class="status-indicator" id="market-status"></span>
+                    <span id="market-text">Market Closed</span>
+                </div>
+                <div class="last-update">
+                    Last Update: <span id="last-update">--:--:--</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <!-- Timeframe Selector -->
+                <div class="timeframe-section">
+                    <h3>Timeframes</h3>
+                    <div class="timeframe-buttons">
+                        <button class="timeframe-btn" data-timeframe="1">M1</button>
+                        <button class="timeframe-btn" data-timeframe="5">M5</button>
+                        <button class="timeframe-btn" data-timeframe="15">M15</button>
+                        <button class="timeframe-btn" data-timeframe="30">M30</button>
+                        <button class="timeframe-btn active" data-timeframe="60">H1</button>
+                        <button class="timeframe-btn" data-timeframe="240">H4</button>
+                        <button class="timeframe-btn" data-timeframe="1440">D1</button>
+                        <button class="timeframe-btn" data-timeframe="10080">W1</button>
+                    </div>
+                </div>
+
+                <!-- Chart Controls -->
+                <div class="chart-controls">
+                    <h3>Chart Type</h3>
+                    <div class="chart-type-buttons">
+                        <button class="chart-type-btn active" data-type="candlestick">Candlestick</button>
+                        <button class="chart-type-btn" data-type="line">Line</button>
+                        <button class="chart-type-btn" data-type="area">Area</button>
+                    </div>
+                </div>
+
+                <!-- Technical Indicators -->
+                <div class="indicators-section">
+                    <h3>Indicators</h3>
+                    <div class="indicator-list">
+                        <label class="indicator-item">
+                            <input type="checkbox" id="sma-20" data-indicator="sma20">
+                            <span>SMA 20</span>
+                        </label>
+                        <label class="indicator-item">
+                            <input type="checkbox" id="sma-50" data-indicator="sma50">
+                            <span>SMA 50</span>
+                        </label>
+                        <label class="indicator-item">
+                            <input type="checkbox" id="ema-20" data-indicator="ema20">
+                            <span>EMA 20</span>
+                        </label>
+                        <label class="indicator-item">
+                            <input type="checkbox" id="bollinger" data-indicator="bollinger">
+                            <span>Bollinger Bands</span>
+                        </label>
+                        <label class="indicator-item">
+                            <input type="checkbox" id="rsi" data-indicator="rsi">
+                            <span>RSI</span>
+                        </label>
+                        <label class="indicator-item">
+                            <input type="checkbox" id="macd" data-indicator="macd">
+                            <span>MACD</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Market Data -->
+                <div class="market-data">
+                    <h3>Market Data</h3>
+                    <div class="data-grid">
+                        <div class="data-item">
+                            <span class="label">Open:</span>
+                            <span class="value" id="day-open">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">High:</span>
+                            <span class="value" id="day-high">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Low:</span>
+                            <span class="value" id="day-low">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Volume:</span>
+                            <span class="value" id="volume">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">ATR:</span>
+                            <span class="value" id="atr">--</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Volatility:</span>
+                            <span class="value" id="volatility">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Trading Sessions -->
+                <div class="sessions-section">
+                    <h3>Trading Sessions</h3>
+                    <div class="session-list">
+                        <div class="session-item">
+                            <span class="session-name">Asian</span>
+                            <span class="session-time">22:00-08:00</span>
+                            <span class="session-status" id="asian-status">Closed</span>
+                        </div>
+                        <div class="session-item">
+                            <span class="session-name">London</span>
+                            <span class="session-time">08:00-17:00</span>
+                            <span class="session-status" id="london-status">Closed</span>
+                        </div>
+                        <div class="session-item">
+                            <span class="session-name">New York</span>
+                            <span class="session-time">13:00-22:00</span>
+                            <span class="session-status" id="newyork-status">Closed</span>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Chart Container -->
+            <div class="chart-container">
+                <div class="chart-header">
+                    <div class="chart-title">
+                        <span id="chart-symbol">XAUUSD</span>
+                        <span id="chart-timeframe">1 Hour</span>
+                    </div>
+                    <div class="chart-tools">
+                        <button class="tool-btn" id="zoom-in" title="Zoom In">🔍+</button>
+                        <button class="tool-btn" id="zoom-out" title="Zoom Out">🔍-</button>
+                        <button class="tool-btn" id="reset-zoom" title="Reset Zoom">↻</button>
+                        <button class="tool-btn" id="fullscreen" title="Fullscreen">⛶</button>
+                    </div>
+                </div>
+                
+                <!-- Main Chart -->
+                <div class="chart-wrapper">
+                    <canvas id="main-chart"></canvas>
+                </div>
+
+                <!-- Loading Overlay -->
+                <div class="loading-overlay" id="loading-overlay">
+                    <div class="loading-spinner"></div>
+                    <div class="loading-text">Loading market data...</div>
+                </div>
+
+                <!-- Error Overlay -->
+                <div class="error-overlay" id="error-overlay" style="display: none;">
+                    <div class="error-message">
+                        <h3>Connection Error</h3>
+                        <p>Unable to fetch market data. Please check your connection and try again.</p>
+                        <button class="retry-btn" id="retry-btn">Retry</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Panel -->
+        <div class="bottom-panel">
+            <!-- Sub Charts -->
+            <div class="sub-charts">
+                <div class="sub-chart-container">
+                    <div class="sub-chart-header">
+                        <span>RSI (14)</span>
+                        <span class="indicator-value" id="rsi-value">--</span>
+                    </div>
+                    <canvas id="rsi-chart" height="80"></canvas>
+                </div>
+                
+                <div class="sub-chart-container">
+                    <div class="sub-chart-header">
+                        <span>MACD (12,26,9)</span>
+                        <span class="indicator-value" id="macd-value">--</span>
+                    </div>
+                    <canvas id="macd-chart" height="80"></canvas>
+                </div>
+                
+                <div class="sub-chart-container">
+                    <div class="sub-chart-header">
+                        <span>Volume</span>
+                        <span class="indicator-value" id="volume-value">--</span>
+                    </div>
+                    <canvas id="volume-chart" height="80"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Connection Status -->
+        <div class="connection-status" id="connection-status">
+            <span class="status-dot"></span>
+            <span class="status-text">Connected</span>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/config.js"></script>
+    <script src="js/dataFetcher.js"></script>
+    <script src="js/indicators.js"></script>
+    <script src="js/chartManager.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
