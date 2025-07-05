@@ -1,0 +1,382 @@
+//@version=5
+strategy("XAUUSD ICT Strategy Optimizer", shorttitle="XAUUSD ICT Optimizer", overlay=true, 
+         default_qty_type=strategy.percent_of_equity, default_qty_value=10, 
+         commission_type=strategy.commission.percent, commission_value=0.1,
+         max_bars_back=5000)
+
+// ==========================================
+// OPTIMIZATION PARAMETERS
+// ==========================================
+
+// Risk Management Optimization
+risk_per_trade = input.float(2.0, "Risk Per Trade (%)", minval=0.5, maxval=5.0, step=0.5, group="Risk Optimization")
+atr_sl_mult = input.float(1.5, "ATR Stop Loss Multiplier", minval=0.5, maxval=3.0, step=0.1, group="Risk Optimization")
+atr_tp1_mult = input.float(2.0, "ATR TP1 Multiplier", minval=1.0, maxval=4.0, step=0.2, group="Risk Optimization")
+atr_tp2_mult = input.float(3.0, "ATR TP2 Multiplier", minval=2.0, maxval=6.0, step=0.2, group="Risk Optimization")
+
+// ICT Parameter Optimization
+ob_lookback = input.int(10, "Order Block Lookback", minval=5, maxval=25, step=1, group="ICT Optimization")
+fvg_min_size = input.float(0.5, "FVG Min Size (ATR mult)", minval=0.1, maxval=2.0, step=0.1, group="ICT Optimization")
+liquidity_touches = input.int(3, "Liquidity Min Touches", minval=2, maxval=6, step=1, group="ICT Optimization")
+liquidity_lookback = input.int(20, "Liquidity Lookback", minval=10, maxval=50, step=5, group="ICT Optimization")
+
+// Traditional TA Optimization
+rsi_length = input.int(14, "RSI Length", minval=8, maxval=25, step=1, group="TA Optimization")
+rsi_overbought = input.int(70, "RSI Overbought", minval=60, maxval=85, step=2, group="TA Optimization")
+rsi_oversold = input.int(30, "RSI Oversold", minval=15, maxval=40, step=2, group="TA Optimization")
+
+bb_length = input.int(20, "BB Length", minval=10, maxval=40, step=2, group="TA Optimization")
+bb_mult = input.float(2.0, "BB Multiplier", minval=1.5, maxval=3.0, step=0.1, group="TA Optimization")
+
+macd_fast = input.int(12, "MACD Fast", minval=8, maxval=18, step=1, group="TA Optimization")
+macd_slow = input.int(26, "MACD Slow", minval=20, maxval=35, step=1, group="TA Optimization")
+macd_signal = input.int(9, "MACD Signal", minval=6, maxval=15, step=1, group="TA Optimization")
+
+// Filter Optimization
+volume_threshold = input.float(1.2, "Volume Threshold", minval=1.0, maxval=2.0, step=0.1, group="Filter Optimization")
+trend_strength = input.int(50, "Trend Filter Strength", minval=20, maxval=100, step=5, group="Filter Optimization")
+
+// Session Filter
+use_london_only = input.bool(false, "London Session Only", group="Session Optimization")
+use_ny_only = input.bool(false, "New York Session Only", group="Session Optimization")
+use_overlap_only = input.bool(true, "Overlap Sessions Only", group="Session Optimization")
+
+// Strategy Selection for Optimization
+use_order_blocks = input.bool(true, "Enable Order Block Strategy", group="Strategy Selection")
+use_fvg = input.bool(true, "Enable FVG Strategy", group="Strategy Selection")
+use_liquidity = input.bool(true, "Enable Liquidity Strategy", group="Strategy Selection")
+
+// ==========================================
+// CORE INDICATORS (Same as main strategy)
+// ==========================================
+
+atr = ta.atr(14)
+rsi = ta.rsi(close, rsi_length)
+
+bb_basis = ta.sma(close, bb_length)
+bb_dev = bb_mult * ta.stdev(close, bb_length)
+bb_upper = bb_basis + bb_dev
+bb_lower = bb_basis - bb_dev
+
+[macd_line, macd_signal_line, macd_histogram] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+
+volume_sma = ta.sma(volume, 20)
+volume_ratio = volume / volume_sma
+
+ema_50 = ta.ema(close, trend_strength)
+ema_200 = ta.ema(close, 200)
+
+// ==========================================
+// ICT LOGIC (Optimized)
+// ==========================================
+
+// Order Block Detection (Optimized)
+impulse_threshold = atr * 0.3
+bullish_impulse = close > close[1] and (close - open) > impulse_threshold
+bearish_impulse = close < close[1] and (open - close) > impulse_threshold
+
+var float bull_ob_high = na
+var float bull_ob_low = na
+var int bull_ob_bar = na
+var float bear_ob_high = na
+var float bear_ob_low = na
+var int bear_ob_bar = na
+
+if bullish_impulse and close[1] < open[1]
+    bull_ob_high := high[1]
+    bull_ob_low := low[1]
+    bull_ob_bar := bar_index
+
+if bearish_impulse and close[1] > open[1]
+    bear_ob_high := high[1]
+    bear_ob_low := low[1]
+    bear_ob_bar := bar_index
+
+bull_ob_valid = not na(bull_ob_high) and bar_index - bull_ob_bar < ob_lookback * 5
+bear_ob_valid = not na(bear_ob_high) and bar_index - bear_ob_bar < ob_lookback * 5
+
+// Fair Value Gap Detection (Optimized)
+gap_up = low > high[2] and high[1] > high[2] and low[1] > low[2]
+gap_down = high < low[2] and low[1] < low[2] and high[1] < high[2]
+
+var float fvg_top = na
+var float fvg_bottom = na
+var bool fvg_bullish = na
+var int fvg_bar = na
+
+if gap_up and (low - high[2]) > atr * fvg_min_size
+    fvg_top := low
+    fvg_bottom := high[2]
+    fvg_bullish := true
+    fvg_bar := bar_index
+
+if gap_down and (low[2] - high) > atr * fvg_min_size
+    fvg_top := low[2]
+    fvg_bottom := high
+    fvg_bullish := false
+    fvg_bar := bar_index
+
+fvg_valid = not na(fvg_top) and bar_index - fvg_bar < 30
+
+// Liquidity Pool Detection (Optimized)
+equal_highs = ta.pivothigh(high, liquidity_lookback/2, liquidity_lookback/2)
+equal_lows = ta.pivotlow(low, liquidity_lookback/2, liquidity_lookback/2)
+
+var float liquidity_high = na
+var float liquidity_low = na
+var int high_touches = 0
+var int low_touches = 0
+
+if not na(equal_highs)
+    if na(liquidity_high) or math.abs(equal_highs - liquidity_high) > atr * 0.5
+        liquidity_high := equal_highs
+        high_touches := 1
+    else if math.abs(equal_highs - liquidity_high) <= atr * 0.5
+        high_touches := high_touches + 1
+
+if not na(equal_lows)
+    if na(liquidity_low) or math.abs(equal_lows - liquidity_low) > atr * 0.5
+        liquidity_low := equal_lows
+        low_touches := 1
+    else if math.abs(equal_lows - liquidity_low) <= atr * 0.5
+        low_touches := low_touches + 1
+
+buy_liquidity_valid = not na(liquidity_high) and high_touches >= liquidity_touches
+sell_liquidity_valid = not na(liquidity_low) and low_touches >= liquidity_touches
+
+// ==========================================
+// SESSION FILTERING (Optimized)
+// ==========================================
+
+london_session = time(timeframe.period, "0800-1700", "UTC")
+newyork_session = time(timeframe.period, "1300-2200", "UTC")
+overlap_session = time(timeframe.period, "1300-1700", "UTC")
+
+in_session = false
+if use_london_only and not na(london_session)
+    in_session := true
+else if use_ny_only and not na(newyork_session)
+    in_session := true
+else if use_overlap_only and not na(overlap_session)
+    in_session := true
+else if not use_london_only and not use_ny_only and not use_overlap_only
+    in_session := not na(london_session) or not na(newyork_session)
+
+// ==========================================
+// OPTIMIZED ENTRY LOGIC
+// ==========================================
+
+// Enhanced Traditional TA Filters
+rsi_bullish = rsi > 45 and rsi < rsi_overbought
+rsi_bearish = rsi < 55 and rsi > rsi_oversold
+macd_bullish = macd_line > macd_signal_line and macd_histogram > 0
+macd_bearish = macd_line < macd_signal_line and macd_histogram < 0
+bb_bullish = close > bb_basis and close < bb_upper
+bb_bearish = close < bb_basis and close > bb_lower
+volume_confirmation = volume_ratio > volume_threshold
+
+// Optimized Trend Filter
+uptrend = close > ema_200 and ema_50 > ema_200
+downtrend = close < ema_200 and ema_50 < ema_200
+
+// Fibonacci Levels (for confluence)
+swing_high = ta.highest(high, 50)
+swing_low = ta.lowest(low, 50)
+fib_range = swing_high - swing_low
+fib_618 = swing_low + fib_range * 0.618
+fib_786 = swing_low + fib_range * 0.786
+
+// Strategy A: Order Block + Traditional TA (Optimized)
+bull_ob_entry = use_order_blocks and bull_ob_valid and 
+               close <= bull_ob_high and close >= bull_ob_low and
+               rsi_bullish and macd_bullish and bb_bullish and
+               volume_confirmation and uptrend and in_session
+
+bear_ob_entry = use_order_blocks and bear_ob_valid and 
+               close <= bear_ob_high and close >= bear_ob_low and
+               rsi_bearish and macd_bearish and bb_bearish and
+               volume_confirmation and downtrend and in_session
+
+// Strategy B: FVG + Fibonacci (Optimized)
+fib_confluence = math.abs(close - fib_618) < atr * 0.5 or math.abs(close - fib_786) < atr * 0.5
+
+fvg_bull_entry = use_fvg and fvg_valid and fvg_bullish and
+                close <= fvg_top and close >= fvg_bottom and
+                fib_confluence and rsi_bullish and macd_bullish and 
+                uptrend and in_session
+
+fvg_bear_entry = use_fvg and fvg_valid and not fvg_bullish and
+                close <= fvg_top and close >= fvg_bottom and
+                fib_confluence and rsi_bearish and macd_bearish and 
+                downtrend and in_session
+
+// Strategy C: Liquidity Sweep (Optimized)
+liquidity_bull_sweep = buy_liquidity_valid and high > liquidity_high and close < liquidity_high
+liquidity_bear_sweep = sell_liquidity_valid and low < liquidity_low and close > liquidity_low
+
+liq_bull_entry = use_liquidity and liquidity_bull_sweep and
+                rsi < 70 and rsi > 30 and
+                macd_bearish and volume_confirmation and in_session
+
+liq_bear_entry = use_liquidity and liquidity_bear_sweep and
+                rsi < 70 and rsi > 30 and
+                macd_bullish and volume_confirmation and in_session
+
+// Combined Entry Signals
+long_signal = (bull_ob_entry or fvg_bull_entry or liq_bull_entry) and strategy.position_size == 0
+short_signal = (bear_ob_entry or fvg_bear_entry or liq_bear_entry) and strategy.position_size == 0
+
+// ==========================================
+// OPTIMIZED RISK MANAGEMENT
+// ==========================================
+
+volatility_adj = math.min(atr / ta.sma(atr, 50), 2.0)
+position_size = risk_per_trade / volatility_adj
+
+stop_loss_distance = atr * atr_sl_mult
+take_profit_1_distance = atr * atr_tp1_mult
+take_profit_2_distance = atr * atr_tp2_mult
+
+// ==========================================
+// STRATEGY EXECUTION
+// ==========================================
+
+if long_signal
+    strategy.entry("Long", strategy.long, qty=position_size)
+    long_stop = close - stop_loss_distance
+    long_tp1 = close + take_profit_1_distance
+    long_tp2 = close + take_profit_2_distance
+    
+    strategy.exit("Long TP1", "Long", limit=long_tp1, stop=long_stop, qty_percent=50)
+    strategy.exit("Long TP2", "Long", limit=long_tp2, stop=long_stop)
+
+if short_signal
+    strategy.entry("Short", strategy.short, qty=position_size)
+    short_stop = close + stop_loss_distance
+    short_tp1 = close - take_profit_1_distance
+    short_tp2 = close - take_profit_2_distance
+    
+    strategy.exit("Short TP1", "Short", limit=short_tp1, stop=short_stop, qty_percent=50)
+    strategy.exit("Short TP2", "Short", limit=short_tp2, stop=short_stop)
+
+// ==========================================
+// OPTIMIZATION RESULTS TABLE
+// ==========================================
+
+if barstate.islast
+    var table opt_table = table.new(position.top_right, 3, 16, bgcolor=color.white, border_width=2)
+    
+    // Calculate optimization metrics
+    total_trades = strategy.closedtrades
+    win_rate = total_trades > 0 ? strategy.wintrades / total_trades * 100 : 0
+    profit_factor = strategy.grossprofit / math.max(strategy.grossloss, 1)
+    max_dd = strategy.max_drawdown
+    net_profit = strategy.netprofit
+    total_return = (net_profit / strategy.initial_capital) * 100
+    
+    // Calculate optimization score
+    opt_score = 0
+    opt_score := opt_score + (win_rate >= 75 ? 30 : win_rate >= 70 ? 25 : win_rate >= 65 ? 20 : win_rate >= 60 ? 15 : 0)
+    opt_score := opt_score + (profit_factor >= 2.5 ? 25 : profit_factor >= 2.0 ? 20 : profit_factor >= 1.5 ? 15 : profit_factor >= 1.0 ? 10 : 0)
+    opt_score := opt_score + (max_dd <= 5 ? 20 : max_dd <= 8 ? 15 : max_dd <= 12 ? 10 : max_dd <= 15 ? 5 : 0)
+    opt_score := opt_score + (total_return >= 100 ? 15 : total_return >= 50 ? 10 : total_return >= 20 ? 5 : 0)
+    opt_score := opt_score + (total_trades >= 50 ? 10 : total_trades >= 30 ? 8 : total_trades >= 20 ? 5 : total_trades >= 10 ? 3 : 0)
+    
+    // Headers
+    table.cell(opt_table, 0, 0, "OPTIMIZATION RESULTS", bgcolor=color.navy, text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 1, 0, "Value", bgcolor=color.navy, text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 2, 0, "Score", bgcolor=color.navy, text_color=color.white, text_size=size.small)
+    
+    // Performance Metrics
+    table.cell(opt_table, 0, 1, "Total Trades", text_size=size.small)
+    table.cell(opt_table, 1, 1, str.tostring(total_trades), text_size=size.small)
+    trade_score = total_trades >= 50 ? "10" : total_trades >= 30 ? "8" : total_trades >= 20 ? "5" : "0"
+    table.cell(opt_table, 2, 1, trade_score, text_size=size.small)
+    
+    table.cell(opt_table, 0, 2, "Win Rate", text_size=size.small)
+    table.cell(opt_table, 1, 2, str.tostring(math.round(win_rate, 1)) + "%", 
+               bgcolor=win_rate >= 70 ? color.green : win_rate >= 60 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    wr_score = win_rate >= 75 ? "30" : win_rate >= 70 ? "25" : win_rate >= 65 ? "20" : "0"
+    table.cell(opt_table, 2, 2, wr_score, text_size=size.small)
+    
+    table.cell(opt_table, 0, 3, "Profit Factor", text_size=size.small)
+    table.cell(opt_table, 1, 3, str.tostring(math.round(profit_factor, 2)), 
+               bgcolor=profit_factor >= 2.0 ? color.green : profit_factor >= 1.5 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    pf_score = profit_factor >= 2.5 ? "25" : profit_factor >= 2.0 ? "20" : profit_factor >= 1.5 ? "15" : "0"
+    table.cell(opt_table, 2, 3, pf_score, text_size=size.small)
+    
+    table.cell(opt_table, 0, 4, "Max Drawdown", text_size=size.small)
+    table.cell(opt_table, 1, 4, str.tostring(math.round(max_dd, 1)) + "%", 
+               bgcolor=max_dd <= 8 ? color.green : max_dd <= 15 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    dd_score = max_dd <= 5 ? "20" : max_dd <= 8 ? "15" : max_dd <= 12 ? "10" : "0"
+    table.cell(opt_table, 2, 4, dd_score, text_size=size.small)
+    
+    table.cell(opt_table, 0, 5, "Total Return", text_size=size.small)
+    table.cell(opt_table, 1, 5, str.tostring(math.round(total_return, 1)) + "%", 
+               bgcolor=total_return > 50 ? color.green : total_return > 20 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    ret_score = total_return >= 100 ? "15" : total_return >= 50 ? "10" : total_return >= 20 ? "5" : "0"
+    table.cell(opt_table, 2, 5, ret_score, text_size=size.small)
+    
+    table.cell(opt_table, 0, 6, "OPTIMIZATION SCORE", text_size=size.small)
+    table.cell(opt_table, 1, 6, str.tostring(opt_score) + "/100", 
+               bgcolor=opt_score >= 80 ? color.green : opt_score >= 60 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 2, 6, opt_score >= 80 ? "EXCELLENT" : opt_score >= 60 ? "GOOD" : "POOR", text_size=size.small)
+    
+    // Parameter Display
+    table.cell(opt_table, 0, 7, "CURRENT PARAMETERS", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+    table.cell(opt_table, 1, 7, "", bgcolor=color.gray, text_size=size.small)
+    table.cell(opt_table, 2, 7, "", bgcolor=color.gray, text_size=size.small)
+    
+    table.cell(opt_table, 0, 8, "Risk per Trade", text_size=size.small)
+    table.cell(opt_table, 1, 8, str.tostring(risk_per_trade) + "%", text_size=size.small)
+    table.cell(opt_table, 2, 8, "", text_size=size.small)
+    
+    table.cell(opt_table, 0, 9, "ATR SL Mult", text_size=size.small)
+    table.cell(opt_table, 1, 9, str.tostring(atr_sl_mult), text_size=size.small)
+    table.cell(opt_table, 2, 9, "", text_size=size.small)
+    
+    table.cell(opt_table, 0, 10, "RSI Length", text_size=size.small)
+    table.cell(opt_table, 1, 10, str.tostring(rsi_length), text_size=size.small)
+    table.cell(opt_table, 2, 10, "", text_size=size.small)
+    
+    table.cell(opt_table, 0, 11, "BB Length", text_size=size.small)
+    table.cell(opt_table, 1, 11, str.tostring(bb_length), text_size=size.small)
+    table.cell(opt_table, 2, 11, "", text_size=size.small)
+    
+    table.cell(opt_table, 0, 12, "OB Lookback", text_size=size.small)
+    table.cell(opt_table, 1, 12, str.tostring(ob_lookback), text_size=size.small)
+    table.cell(opt_table, 2, 12, "", text_size=size.small)
+    
+    table.cell(opt_table, 0, 13, "FVG Min Size", text_size=size.small)
+    table.cell(opt_table, 1, 13, str.tostring(fvg_min_size), text_size=size.small)
+    table.cell(opt_table, 2, 13, "", text_size=size.small)
+    
+    table.cell(opt_table, 0, 14, "Session Filter", text_size=size.small)
+    session_type = use_overlap_only ? "OVERLAP" : use_london_only ? "LONDON" : use_ny_only ? "NY" : "ALL"
+    table.cell(opt_table, 1, 14, session_type, text_size=size.small)
+    table.cell(opt_table, 2, 14, "", text_size=size.small)
+    
+    table.cell(opt_table, 0, 15, "Strategy Count", text_size=size.small)
+    strategy_count = (use_order_blocks ? 1 : 0) + (use_fvg ? 1 : 0) + (use_liquidity ? 1 : 0)
+    table.cell(opt_table, 1, 15, str.tostring(strategy_count) + "/3", text_size=size.small)
+    table.cell(opt_table, 2, 15, "", text_size=size.small)
+
+// ==========================================
+// SIMPLE PLOTTING FOR OPTIMIZATION
+// ==========================================
+
+// Basic plots for reference
+plot(ema_50, "EMA 50", color=color.orange, linewidth=1)
+plot(ema_200, "EMA 200", color=color.purple, linewidth=1)
+
+// Entry signals
+plotshape(long_signal, title="Long", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(short_signal, title="Short", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+
+// Session background
+bgcolor(not na(overlap_session) ? color.new(color.blue, 95) : na, title="Overlap Session")

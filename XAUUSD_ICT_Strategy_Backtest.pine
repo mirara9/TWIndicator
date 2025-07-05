@@ -1,0 +1,485 @@
+//@version=5
+strategy("XAUUSD ICT + Traditional TA Strategy", shorttitle="XAUUSD ICT TA", overlay=true, 
+         default_qty_type=strategy.percent_of_equity, default_qty_value=10, 
+         commission_type=strategy.commission.percent, commission_value=0.1,
+         slippage=2, max_bars_back=5000, max_drawings_count=500)
+
+// ==========================================
+// STRATEGY INPUTS
+// ==========================================
+
+// Risk Management
+risk_per_trade = input.float(2.0, "Risk Per Trade (%)", minval=0.5, maxval=5.0, group="Risk Management")
+max_positions = input.int(2, "Maximum Concurrent Positions", minval=1, maxval=5, group="Risk Management")
+use_session_filter = input.bool(true, "Use London/NY Session Filter", group="Risk Management")
+
+// ICT Parameters
+ob_lookback = input.int(10, "Order Block Lookback", minval=5, maxval=20, group="ICT Settings")
+fvg_min_size = input.float(0.5, "Minimum FVG Size (% of ATR)", minval=0.1, maxval=2.0, group="ICT Settings")
+liquidity_touches = input.int(3, "Minimum Liquidity Touches", minval=2, maxval=5, group="ICT Settings")
+liquidity_lookback = input.int(20, "Liquidity Pool Lookback", minval=10, maxval=50, group="ICT Settings")
+
+// Traditional TA Parameters
+rsi_length = input.int(14, "RSI Length", minval=5, maxval=30, group="Traditional TA")
+rsi_overbought = input.int(70, "RSI Overbought", minval=60, maxval=90, group="Traditional TA")
+rsi_oversold = input.int(30, "RSI Oversold", minval=10, maxval=40, group="Traditional TA")
+
+bb_length = input.int(20, "Bollinger Bands Length", minval=10, maxval=50, group="Traditional TA")
+bb_mult = input.float(2.0, "Bollinger Bands Multiplier", minval=1.0, maxval=3.0, group="Traditional TA")
+
+macd_fast = input.int(12, "MACD Fast Length", minval=5, maxval=20, group="Traditional TA")
+macd_slow = input.int(26, "MACD Slow Length", minval=15, maxval=40, group="Traditional TA")
+macd_signal = input.int(9, "MACD Signal Length", minval=5, maxval=15, group="Traditional TA")
+
+// Strategy Selection
+use_order_blocks = input.bool(true, "Use Order Block Strategy", group="Strategy Selection")
+use_fvg = input.bool(true, "Use Fair Value Gap Strategy", group="Strategy Selection")
+use_liquidity = input.bool(true, "Use Liquidity Sweep Strategy", group="Strategy Selection")
+
+// Take Profit and Stop Loss
+atr_sl_mult = input.float(1.5, "ATR Stop Loss Multiplier", minval=0.5, maxval=3.0, group="Exit Strategy")
+atr_tp1_mult = input.float(2.0, "ATR Take Profit 1 Multiplier", minval=1.0, maxval=5.0, group="Exit Strategy")
+atr_tp2_mult = input.float(3.0, "ATR Take Profit 2 Multiplier", minval=2.0, maxval=6.0, group="Exit Strategy")
+partial_profit_1 = input.float(50.0, "First Partial Profit (%)", minval=25.0, maxval=75.0, group="Exit Strategy")
+
+// Display Options
+show_order_blocks = input.bool(true, "Show Order Blocks", group="Display")
+show_fvg = input.bool(true, "Show Fair Value Gaps", group="Display")
+show_liquidity = input.bool(true, "Show Liquidity Levels", group="Display")
+
+// ==========================================
+// TECHNICAL INDICATORS
+// ==========================================
+
+// ATR for volatility
+atr = ta.atr(14)
+
+// RSI
+rsi = ta.rsi(close, rsi_length)
+
+// Bollinger Bands
+bb_basis = ta.sma(close, bb_length)
+bb_dev = bb_mult * ta.stdev(close, bb_length)
+bb_upper = bb_basis + bb_dev
+bb_lower = bb_basis - bb_dev
+
+// MACD
+[macd_line, macd_signal_line, macd_histogram] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+
+// Volume
+volume_sma = ta.sma(volume, 20)
+volume_ratio = volume / volume_sma
+
+// EMAs for trend
+ema_50 = ta.ema(close, 50)
+ema_200 = ta.ema(close, 200)
+
+// ==========================================
+// ICT CONCEPTS IMPLEMENTATION
+// ==========================================
+
+// Order Block Detection
+bullish_impulse = close > close[1] and (close - open) > atr * 0.5
+bearish_impulse = close < close[1] and (open - close) > atr * 0.5
+
+var float bull_ob_high = na
+var float bull_ob_low = na
+var int bull_ob_bar = na
+var float bear_ob_high = na
+var float bear_ob_low = na
+var int bear_ob_bar = na
+
+// Detect Bullish Order Block (last red candle before bullish impulse)
+if bullish_impulse and close[1] < open[1]
+    bull_ob_high := high[1]
+    bull_ob_low := low[1]
+    bull_ob_bar := bar_index
+
+// Detect Bearish Order Block (last green candle before bearish impulse)
+if bearish_impulse and close[1] > open[1]
+    bear_ob_high := high[1]
+    bear_ob_low := low[1]
+    bear_ob_bar := bar_index
+
+// Order Block Validity (not too old)
+bull_ob_valid = not na(bull_ob_high) and bar_index - bull_ob_bar < 50
+bear_ob_valid = not na(bear_ob_high) and bar_index - bear_ob_bar < 50
+
+// Fair Value Gap Detection
+gap_up = low > high[2] and high[1] > high[2] and low[1] > low[2]
+gap_down = high < low[2] and low[1] < low[2] and high[1] < high[2]
+
+var float fvg_top = na
+var float fvg_bottom = na
+var bool fvg_bullish = na
+var int fvg_bar = na
+
+// Bullish FVG (gap up)
+if gap_up and (low - high[2]) > atr * fvg_min_size
+    fvg_top := low
+    fvg_bottom := high[2]
+    fvg_bullish := true
+    fvg_bar := bar_index
+
+// Bearish FVG (gap down)
+if gap_down and (low[2] - high) > atr * fvg_min_size
+    fvg_top := low[2]
+    fvg_bottom := high
+    fvg_bullish := false
+    fvg_bar := bar_index
+
+// FVG Validity
+fvg_valid = not na(fvg_top) and bar_index - fvg_bar < 30
+
+// Liquidity Pool Detection (Equal Highs/Lows)
+equal_highs = ta.pivothigh(high, liquidity_lookback/2, liquidity_lookback/2)
+equal_lows = ta.pivotlow(low, liquidity_lookback/2, liquidity_lookback/2)
+
+var float liquidity_high = na
+var float liquidity_low = na
+var int high_touches = 0
+var int low_touches = 0
+
+// Track equal highs
+if not na(equal_highs)
+    if na(liquidity_high) or math.abs(equal_highs - liquidity_high) > atr * 0.3
+        liquidity_high := equal_highs
+        high_touches := 1
+    else if math.abs(equal_highs - liquidity_high) <= atr * 0.3
+        high_touches := high_touches + 1
+
+// Track equal lows
+if not na(equal_lows)
+    if na(liquidity_low) or math.abs(equal_lows - liquidity_low) > atr * 0.3
+        liquidity_low := equal_lows
+        low_touches := 1
+    else if math.abs(equal_lows - liquidity_low) <= atr * 0.3
+        low_touches := low_touches + 1
+
+// Liquidity Pool Validity
+buy_liquidity_valid = not na(liquidity_high) and high_touches >= liquidity_touches
+sell_liquidity_valid = not na(liquidity_low) and low_touches >= liquidity_touches
+
+// ==========================================
+// SESSION FILTERING
+// ==========================================
+
+// London Session (08:00-17:00 GMT)
+london_session = time(timeframe.period, "0800-1700", "UTC")
+
+// New York Session (13:00-22:00 GMT)
+newyork_session = time(timeframe.period, "1300-2200", "UTC")
+
+// Active trading session
+in_session = use_session_filter ? (not na(london_session) or not na(newyork_session)) : true
+
+// ==========================================
+// FIBONACCI LEVELS
+// ==========================================
+
+// Calculate recent swing high and low for Fibonacci
+swing_high = ta.highest(high, 50)
+swing_low = ta.lowest(low, 50)
+fib_range = swing_high - swing_low
+
+// Key Fibonacci levels
+fib_618 = swing_low + fib_range * 0.618
+fib_786 = swing_low + fib_range * 0.786
+fib_382 = swing_low + fib_range * 0.382
+
+// ==========================================
+// STRATEGY LOGIC - ENTRY CONDITIONS
+// ==========================================
+
+// Traditional TA Confirmation
+rsi_bullish = rsi > 45 and rsi < rsi_overbought
+rsi_bearish = rsi < 55 and rsi > rsi_oversold
+macd_bullish = macd_line > macd_signal_line and macd_histogram > macd_histogram[1]
+macd_bearish = macd_line < macd_signal_line and macd_histogram < macd_histogram[1]
+bb_bullish = close < bb_upper and close > bb_basis
+bb_bearish = close > bb_lower and close < bb_basis
+volume_confirmation = volume_ratio > 1.2
+
+// Trend Filter
+uptrend = close > ema_200 and ema_50 > ema_200
+downtrend = close < ema_200 and ema_50 < ema_200
+
+// Strategy A: Order Block + Traditional TA
+bull_ob_entry = use_order_blocks and bull_ob_valid and 
+               close <= bull_ob_high and close >= bull_ob_low and
+               rsi_bullish and macd_bullish and bb_bullish and
+               volume_confirmation and uptrend and in_session
+
+bear_ob_entry = use_order_blocks and bear_ob_valid and 
+               close <= bear_ob_high and close >= bear_ob_low and
+               rsi_bearish and macd_bearish and bb_bearish and
+               volume_confirmation and downtrend and in_session
+
+// Strategy B: Fair Value Gap + Fibonacci
+fvg_bull_entry = use_fvg and fvg_valid and fvg_bullish and
+                close <= fvg_top and close >= fvg_bottom and
+                (math.abs(close - fib_618) < atr * 0.5 or math.abs(close - fib_786) < atr * 0.5) and
+                rsi_bullish and macd_bullish and uptrend and in_session
+
+fvg_bear_entry = use_fvg and fvg_valid and not fvg_bullish and
+                close <= fvg_top and close >= fvg_bottom and
+                (math.abs(close - fib_618) < atr * 0.5 or math.abs(close - fib_786) < atr * 0.5) and
+                rsi_bearish and macd_bearish and downtrend and in_session
+
+// Strategy C: Liquidity Sweep + Reversal
+liquidity_bull_sweep = buy_liquidity_valid and high > liquidity_high and close < liquidity_high
+liquidity_bear_sweep = sell_liquidity_valid and low < liquidity_low and close > liquidity_low
+
+liq_bull_entry = use_liquidity and liquidity_bull_sweep and
+                rsi < 70 and rsi > 30 and  // Not extreme
+                macd_bearish and  // Momentum shifting
+                volume_confirmation and in_session
+
+liq_bear_entry = use_liquidity and liquidity_bear_sweep and
+                rsi < 70 and rsi > 30 and  // Not extreme
+                macd_bullish and  // Momentum shifting
+                volume_confirmation and in_session
+
+// Combined Entry Signals
+long_signal = (bull_ob_entry or fvg_bull_entry or liq_bull_entry) and strategy.position_size >= 0
+short_signal = (bear_ob_entry or fvg_bear_entry or liq_bear_entry) and strategy.position_size <= 0
+
+// Position sizing based on volatility
+volatility_adj = math.min(atr / ta.sma(atr, 50), 2.0)
+position_size = risk_per_trade / volatility_adj
+
+// ==========================================
+// RISK MANAGEMENT - STOPS AND TARGETS
+// ==========================================
+
+// Dynamic Stop Loss and Take Profit
+stop_loss_distance = atr * atr_sl_mult
+take_profit_1_distance = atr * atr_tp1_mult
+take_profit_2_distance = atr * atr_tp2_mult
+
+// Long Levels
+long_stop_loss = close - stop_loss_distance
+long_tp1 = close + take_profit_1_distance
+long_tp2 = close + take_profit_2_distance
+
+// Short Levels
+short_stop_loss = close + stop_loss_distance
+short_tp1 = close - take_profit_1_distance
+short_tp2 = close - take_profit_2_distance
+
+// ==========================================
+// STRATEGY EXECUTION
+// ==========================================
+
+// Maximum position check
+max_positions_check = strategy.opentrades < max_positions
+
+// Long Entry
+if long_signal and max_positions_check
+    entry_comment = bull_ob_entry ? "OB Long" : fvg_bull_entry ? "FVG Long" : "LIQ Long"
+    strategy.entry("Long", strategy.long, qty=position_size, comment=entry_comment)
+    
+    // Set exit levels
+    strategy.exit("Long TP1", "Long", limit=long_tp1, stop=long_stop_loss, qty_percent=partial_profit_1)
+    strategy.exit("Long TP2", "Long", limit=long_tp2, stop=long_stop_loss)
+
+// Short Entry
+if short_signal and max_positions_check
+    entry_comment = bear_ob_entry ? "OB Short" : fvg_bear_entry ? "FVG Short" : "LIQ Short"
+    strategy.entry("Short", strategy.short, qty=position_size, comment=entry_comment)
+    
+    // Set exit levels
+    strategy.exit("Short TP1", "Short", limit=short_tp1, stop=short_stop_loss, qty_percent=partial_profit_1)
+    strategy.exit("Short TP2", "Short", limit=short_tp2, stop=short_stop_loss)
+
+// ==========================================
+// PLOTTING
+// ==========================================
+
+// Plot EMAs
+plot(ema_50, "EMA 50", color=color.orange, linewidth=1)
+plot(ema_200, "EMA 200", color=color.purple, linewidth=2)
+
+// Plot Bollinger Bands
+bb_upper_plot = plot(bb_upper, "BB Upper", color=color.gray, linewidth=1)
+bb_lower_plot = plot(bb_lower, "BB Lower", color=color.gray, linewidth=1)
+bb_basis_plot = plot(bb_basis, "BB Basis", color=color.gray, linewidth=1)
+fill(bb_upper_plot, bb_lower_plot, color=color.new(color.gray, 90))
+
+// Plot Order Blocks
+if show_order_blocks and bull_ob_valid
+    box.new(left=bull_ob_bar, top=bull_ob_high, right=bar_index + 10, bottom=bull_ob_low, 
+            border_color=color.green, bgcolor=color.new(color.green, 85), text="Bull OB")
+
+if show_order_blocks and bear_ob_valid
+    box.new(left=bear_ob_bar, top=bear_ob_high, right=bar_index + 10, bottom=bear_ob_low, 
+            border_color=color.red, bgcolor=color.new(color.red, 85), text="Bear OB")
+
+// Plot Fair Value Gaps
+if show_fvg and fvg_valid
+    fvg_color = fvg_bullish ? color.green : color.red
+    box.new(left=fvg_bar, top=fvg_top, right=bar_index + 10, bottom=fvg_bottom, 
+            border_color=fvg_color, bgcolor=color.new(fvg_color, 80), text="FVG")
+
+// Plot Liquidity Levels
+if show_liquidity and buy_liquidity_valid
+    line.new(x1=bar_index-liquidity_lookback, y1=liquidity_high, x2=bar_index+10, y2=liquidity_high, 
+             color=color.purple, width=2, style=line.style_dashed, extend=extend.right)
+
+if show_liquidity and sell_liquidity_valid
+    line.new(x1=bar_index-liquidity_lookback, y1=liquidity_low, x2=bar_index+10, y2=liquidity_low, 
+             color=color.purple, width=2, style=line.style_dashed, extend=extend.right)
+
+// Plot Entry Signals
+plotshape(long_signal, title="Long Entry", style=shape.triangleup, location=location.belowbar, 
+          color=color.lime, size=size.normal)
+plotshape(short_signal, title="Short Entry", style=shape.triangledown, location=location.abovebar, 
+          color=color.red, size=size.normal)
+
+// Plot Session Background
+bgcolor(not na(london_session) ? color.new(color.blue, 95) : na, title="London Session")
+bgcolor(not na(newyork_session) ? color.new(color.orange, 95) : na, title="New York Session")
+
+// ==========================================
+// PERFORMANCE DASHBOARD
+// ==========================================
+
+if barstate.islast
+    var table performance_table = table.new(position.top_left, 2, 20, bgcolor=color.white, border_width=2)
+    
+    // Calculate performance metrics
+    total_trades = strategy.closedtrades
+    winning_trades = strategy.wintrades
+    losing_trades = strategy.losstrades
+    win_rate = total_trades > 0 ? winning_trades / total_trades * 100 : 0
+    
+    profit_factor = strategy.grossprofit / math.max(strategy.grossloss, 1)
+    max_dd = strategy.max_drawdown
+    net_profit = strategy.netprofit
+    avg_win = strategy.wintrades > 0 ? strategy.grossprofit / strategy.wintrades : 0
+    avg_loss = strategy.losstrades > 0 ? strategy.grossloss / strategy.losstrades : 0
+    
+    // Calculate additional metrics
+    total_return = (strategy.netprofit / strategy.initial_capital) * 100
+    sharpe_ratio = strategy.sharpe_ratio
+    
+    // Strategy breakdown
+    ob_trades = 0  // Would need to track separately for detailed breakdown
+    fvg_trades = 0
+    liq_trades = 0
+    
+    // Headers
+    table.cell(performance_table, 0, 0, "ICT + TA STRATEGY RESULTS", bgcolor=color.navy, text_color=color.white, text_size=size.small)
+    table.cell(performance_table, 1, 0, "Value", bgcolor=color.navy, text_color=color.white, text_size=size.small)
+    
+    // Basic Performance Metrics
+    table.cell(performance_table, 0, 1, "Total Trades", text_size=size.small)
+    table.cell(performance_table, 1, 1, str.tostring(total_trades), text_size=size.small)
+    
+    table.cell(performance_table, 0, 2, "Win Rate", text_size=size.small)
+    table.cell(performance_table, 1, 2, str.tostring(math.round(win_rate, 1)) + "%", 
+               bgcolor=win_rate >= 70 ? color.green : win_rate >= 60 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 3, "Profit Factor", text_size=size.small)
+    table.cell(performance_table, 1, 3, str.tostring(math.round(profit_factor, 2)), 
+               bgcolor=profit_factor >= 2.0 ? color.green : profit_factor >= 1.5 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 4, "Max Drawdown", text_size=size.small)
+    table.cell(performance_table, 1, 4, str.tostring(math.round(max_dd, 1)) + "%", 
+               bgcolor=max_dd <= 8 ? color.green : max_dd <= 15 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 5, "Net Profit", text_size=size.small)
+    table.cell(performance_table, 1, 5, str.tostring(math.round(net_profit, 0)), 
+               bgcolor=net_profit > 0 ? color.green : color.red, text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 6, "Total Return", text_size=size.small)
+    table.cell(performance_table, 1, 6, str.tostring(math.round(total_return, 1)) + "%", 
+               bgcolor=total_return > 0 ? color.green : color.red, text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 7, "Sharpe Ratio", text_size=size.small)
+    table.cell(performance_table, 1, 7, str.tostring(math.round(sharpe_ratio, 2)), 
+               bgcolor=sharpe_ratio >= 1.0 ? color.green : sharpe_ratio >= 0.5 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 8, "Avg Win", text_size=size.small)
+    table.cell(performance_table, 1, 8, str.tostring(math.round(avg_win, 0)), text_size=size.small)
+    
+    table.cell(performance_table, 0, 9, "Avg Loss", text_size=size.small)
+    table.cell(performance_table, 1, 9, str.tostring(math.round(avg_loss, 0)), text_size=size.small)
+    
+    // Win/Loss Ratio
+    win_loss_ratio = avg_loss > 0 ? avg_win / avg_loss : 0
+    table.cell(performance_table, 0, 10, "Win/Loss Ratio", text_size=size.small)
+    table.cell(performance_table, 1, 10, str.tostring(math.round(win_loss_ratio, 2)), 
+               bgcolor=win_loss_ratio >= 2.0 ? color.green : win_loss_ratio >= 1.5 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    
+    // Current Market Status
+    table.cell(performance_table, 0, 11, "Current Trend", text_size=size.small)
+    trend_status = uptrend ? "BULLISH" : downtrend ? "BEARISH" : "SIDEWAYS"
+    trend_color = uptrend ? color.green : downtrend ? color.red : color.gray
+    table.cell(performance_table, 1, 11, trend_status, bgcolor=trend_color, text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 12, "RSI", text_size=size.small)
+    table.cell(performance_table, 1, 12, str.tostring(math.round(rsi, 1)), 
+               bgcolor=rsi > rsi_overbought ? color.red : rsi < rsi_oversold ? color.green : color.gray, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 13, "MACD Signal", text_size=size.small)
+    macd_status = macd_line > macd_signal_line ? "BULLISH" : "BEARISH"
+    table.cell(performance_table, 1, 13, macd_status, 
+               bgcolor=macd_line > macd_signal_line ? color.green : color.red, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 14, "BB Position", text_size=size.small)
+    bb_position = close > bb_upper ? "ABOVE" : close < bb_lower ? "BELOW" : "MIDDLE"
+    bb_color = close > bb_upper ? color.red : close < bb_lower ? color.green : color.gray
+    table.cell(performance_table, 1, 14, bb_position, bgcolor=bb_color, text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 15, "Volume Ratio", text_size=size.small)
+    table.cell(performance_table, 1, 15, str.tostring(math.round(volume_ratio, 2)), 
+               bgcolor=volume_ratio > 1.5 ? color.green : volume_ratio > 1.0 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 16, "Session Status", text_size=size.small)
+    session_status = not na(london_session) ? "LONDON" : not na(newyork_session) ? "NEW YORK" : "ASIAN"
+    session_color = in_session ? color.green : color.red
+    table.cell(performance_table, 1, 16, session_status, bgcolor=session_color, text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 17, "Open Positions", text_size=size.small)
+    table.cell(performance_table, 1, 17, str.tostring(strategy.opentrades), 
+               bgcolor=strategy.opentrades > 0 ? color.blue : color.gray, text_color=color.white, text_size=size.small)
+    
+    table.cell(performance_table, 0, 18, "Strategy Status", text_size=size.small)
+    strategy_status = long_signal ? "LONG SIGNAL" : short_signal ? "SHORT SIGNAL" : "NO SIGNAL"
+    strategy_color = long_signal ? color.green : short_signal ? color.red : color.gray
+    table.cell(performance_table, 1, 18, strategy_status, bgcolor=strategy_color, text_color=color.white, text_size=size.small)
+    
+    // Strategy Score
+    strategy_score = 0
+    strategy_score := strategy_score + (win_rate >= 70 ? 25 : win_rate >= 60 ? 15 : win_rate >= 50 ? 10 : 0)
+    strategy_score := strategy_score + (profit_factor >= 2.0 ? 25 : profit_factor >= 1.5 ? 15 : profit_factor >= 1.0 ? 10 : 0)
+    strategy_score := strategy_score + (max_dd <= 8 ? 20 : max_dd <= 15 ? 15 : max_dd <= 20 ? 10 : 0)
+    strategy_score := strategy_score + (total_return > 0 ? 15 : 0)
+    strategy_score := strategy_score + (sharpe_ratio >= 1.0 ? 15 : sharpe_ratio >= 0.5 ? 10 : 0)
+    
+    table.cell(performance_table, 0, 19, "Strategy Score", text_size=size.small)
+    table.cell(performance_table, 1, 19, str.tostring(strategy_score) + "/100", 
+               bgcolor=strategy_score >= 80 ? color.green : strategy_score >= 60 ? color.yellow : color.red, 
+               text_color=color.white, text_size=size.small)
+
+// ==========================================
+// ALERTS
+// ==========================================
+
+// Entry Alerts
+if long_signal
+    entry_type = bull_ob_entry ? "Order Block" : fvg_bull_entry ? "Fair Value Gap" : "Liquidity Sweep"
+    alert("XAUUSD ICT Long Signal: " + entry_type + " | Price: " + str.tostring(close) + " | SL: " + str.tostring(long_stop_loss) + " | TP1: " + str.tostring(long_tp1) + " | TP2: " + str.tostring(long_tp2), alert.freq_once_per_bar)
+
+if short_signal
+    entry_type = bear_ob_entry ? "Order Block" : fvg_bear_entry ? "Fair Value Gap" : "Liquidity Sweep"
+    alert("XAUUSD ICT Short Signal: " + entry_type + " | Price: " + str.tostring(close) + " | SL: " + str.tostring(short_stop_loss) + " | TP1: " + str.tostring(short_tp1) + " | TP2: " + str.tostring(short_tp2), alert.freq_once_per_bar)
