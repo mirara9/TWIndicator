@@ -31,11 +31,12 @@ class DataFetcher {
     }
 
     // Generate realistic demo data
-    generateDemoData(timeframe = '60', count = 100) {
+    generateDemoData(timeframe = '60', count = 100, symbol = CONFIG.CURRENT_SYMBOL) {
         const data = [];
         const now = new Date();
         const intervalMs = parseInt(timeframe) * 60 * 1000;
-        let currentPrice = CONFIG.API.DEMO_BASE_PRICE;
+        const symbolConfig = CONFIG.SYMBOLS[symbol];
+        let currentPrice = symbolConfig ? symbolConfig.demoBasePrice : 2050.00;
         let trend = 0;
 
         for (let i = count - 1; i >= 0; i--) {
@@ -47,8 +48,9 @@ class DataFetcher {
             }
             
             // Generate OHLC data
-            const volatility = this.getVolatilityForHour(timestamp.getUTCHours());
-            const change = (Math.random() - 0.5 + trend * 0.3) * currentPrice * volatility;
+            const volatility = this.getVolatilityForHour(timestamp.getUTCHours(), symbol);
+            const symbolVolatility = symbolConfig ? symbolConfig.volatility : CONFIG.API.DEMO_VOLATILITY;
+            const change = (Math.random() - 0.5 + trend * 0.3) * currentPrice * symbolVolatility;
             
             const open = currentPrice;
             const close = currentPrice + change;
@@ -71,18 +73,32 @@ class DataFetcher {
         return data;
     }
 
-    getVolatilityForHour(hour) {
+    getVolatilityForHour(hour, symbol = CONFIG.CURRENT_SYMBOL) {
+        const symbolConfig = CONFIG.SYMBOLS[symbol];
+        const baseVolatility = symbolConfig ? symbolConfig.volatility : 0.02;
+        
+        // For crypto, volatility is more consistent throughout the day
+        if (symbolConfig && symbolConfig.type === 'crypto') {
+            return baseVolatility;
+        }
+        
+        // For forex, apply time-based volatility multipliers
         const period = CONFIG.DEMO.VOLATILITY_PERIODS.find(p => 
             hour >= p.start && hour < p.end
         );
-        return period ? CONFIG.API.DEMO_VOLATILITY * period.multiplier : CONFIG.API.DEMO_VOLATILITY;
+        return period ? baseVolatility * period.multiplier : baseVolatility;
     }
 
     // Fetch data from Alpha Vantage
-    async fetchFromAlphaVantage(timeframe = '60') {
+    async fetchFromAlphaVantage(timeframe = '60', symbol = CONFIG.CURRENT_SYMBOL) {
         try {
             const interval = this.mapTimeframeToAlphaVantage(timeframe);
-            const url = CONFIG.buildAlphaVantageURL(CONFIG.API.ALPHA_VANTAGE.FUNCTIONS.INTRADAY, interval);
+            const func = CONFIG.SYMBOLS[symbol]?.type === 'crypto' ? 
+                CONFIG.API.ALPHA_VANTAGE.FUNCTIONS.CRYPTO_INTRADAY : 
+                CONFIG.API.ALPHA_VANTAGE.FUNCTIONS.INTRADAY;
+            const url = CONFIG.buildAlphaVantageURL(func, interval, symbol);
+            
+            if (!url) throw new Error('Invalid symbol configuration');
             
             console.log('Fetching from Alpha Vantage:', url);
             
@@ -99,7 +115,7 @@ class DataFetcher {
                 throw new Error('API call frequency limit reached');
             }
             
-            return this.parseAlphaVantageData(data);
+            return this.parseAlphaVantageData(data, symbol);
         } catch (error) {
             console.error('Alpha Vantage error:', error);
             throw error;
@@ -107,10 +123,12 @@ class DataFetcher {
     }
 
     // Fetch data from Twelve Data
-    async fetchFromTwelveData(timeframe = '60') {
+    async fetchFromTwelveData(timeframe = '60', symbol = CONFIG.CURRENT_SYMBOL) {
         try {
             const interval = this.mapTimeframeToTwelveData(timeframe);
-            const url = CONFIG.buildTwelveDataURL(interval);
+            const url = CONFIG.buildTwelveDataURL(interval, 'compact', symbol);
+            
+            if (!url) throw new Error('Invalid symbol configuration');
             
             console.log('Fetching from Twelve Data:', url);
             
@@ -131,10 +149,12 @@ class DataFetcher {
     }
 
     // Fetch data from Financial Modeling Prep
-    async fetchFromFMP(timeframe = '60') {
+    async fetchFromFMP(timeframe = '60', symbol = CONFIG.CURRENT_SYMBOL) {
         try {
             const interval = this.mapTimeframeToFMP(timeframe);
-            const url = CONFIG.buildFMPURL(interval);
+            const url = CONFIG.buildFMPURL(interval, symbol);
+            
+            if (!url) throw new Error('Invalid symbol configuration');
             
             console.log('Fetching from FMP:', url);
             
@@ -155,8 +175,8 @@ class DataFetcher {
     }
 
     // Main fetch method with fallbacks
-    async fetchMarketData(timeframe = '60', useCache = true) {
-        const cacheKey = `market_data_${timeframe}`;
+    async fetchMarketData(timeframe = '60', useCache = true, symbol = CONFIG.CURRENT_SYMBOL) {
+        const cacheKey = `market_data_${symbol}_${timeframe}`;
         
         // Check cache first
         if (useCache && this.cache.has(cacheKey)) {
@@ -173,7 +193,7 @@ class DataFetcher {
         // If offline, use demo data
         if (!this.isOnline) {
             console.log('Offline - using demo data');
-            const demoData = this.generateDemoData(timeframe);
+            const demoData = this.generateDemoData(timeframe, 100, symbol);
             this.cache.set(cacheKey, { data: demoData, timestamp: Date.now() });
             return demoData;
         }
@@ -189,13 +209,13 @@ class DataFetcher {
                 
                 switch (api) {
                     case 'ALPHA_VANTAGE':
-                        data = await this.fetchFromAlphaVantage(timeframe);
+                        data = await this.fetchFromAlphaVantage(timeframe, symbol);
                         break;
                     case 'TWELVE_DATA':
-                        data = await this.fetchFromTwelveData(timeframe);
+                        data = await this.fetchFromTwelveData(timeframe, symbol);
                         break;
                     case 'FMP':
-                        data = await this.fetchFromFMP(timeframe);
+                        data = await this.fetchFromFMP(timeframe, symbol);
                         break;
                 }
 
@@ -213,7 +233,7 @@ class DataFetcher {
 
         // All APIs failed, use demo data
         console.warn('All APIs failed, using demo data');
-        const demoData = this.generateDemoData(timeframe);
+        const demoData = this.generateDemoData(timeframe, 100, symbol);
         this.cache.set(cacheKey, { data: demoData, timestamp: Date.now() });
         return demoData;
     }
@@ -235,7 +255,27 @@ class DataFetcher {
     }
 
     // Parse different API response formats
-    parseAlphaVantageData(data) {
+    parseAlphaVantageData(data, symbol = CONFIG.CURRENT_SYMBOL) {
+        const symbolConfig = CONFIG.SYMBOLS[symbol];
+        
+        if (symbolConfig?.type === 'crypto') {
+            // Handle crypto data format
+            const timeSeries = data['Time Series (Digital Currency Intraday)'];
+            if (!timeSeries) return [];
+            
+            return Object.entries(timeSeries)
+                .map(([timestamp, values]) => ({
+                    timestamp: new Date(timestamp).toISOString(),
+                    open: parseFloat(values['1a. open (USD)']),
+                    high: parseFloat(values['2a. high (USD)']),
+                    low: parseFloat(values['3a. low (USD)']),
+                    close: parseFloat(values['4a. close (USD)']),
+                    volume: Math.floor(Math.random() * 1000000 + 500000)
+                }))
+                .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        }
+        
+        // Handle forex data format
         const timeSeries = data['Time Series FX (1min)'] || 
                           data['Time Series FX (5min)'] || 
                           data['Time Series FX (15min)'] || 

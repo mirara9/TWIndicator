@@ -34,6 +34,9 @@ class XAUUSDApp {
             // Setup event listeners
             this.setupEventListeners();
             
+            // Setup symbol selector
+            this.setupSymbolSelector();
+            
             // Update market status
             this.updateMarketStatus();
             
@@ -81,6 +84,16 @@ class XAUUSDApp {
 
     // Apply loaded preferences
     applyPreferences() {
+        // Apply symbol preference
+        if (this.preferences.symbol && CONFIG.SYMBOLS[this.preferences.symbol]) {
+            CONFIG.setCurrentSymbol(this.preferences.symbol);
+            this.updateSymbolDisplay(this.preferences.symbol);
+            const symbolSelector = document.getElementById('symbol-selector');
+            if (symbolSelector) {
+                symbolSelector.value = this.preferences.symbol;
+            }
+        }
+        
         // Apply timeframe preference
         if (this.preferences.timeframe) {
             window.chartManager.currentTimeframe = this.preferences.timeframe;
@@ -205,6 +218,90 @@ class XAUUSDApp {
         // Add mobile sidebar toggle if needed
         if (window.innerWidth <= 768) {
             this.createMobileToggle();
+        }
+    }
+
+    // Setup symbol selector
+    setupSymbolSelector() {
+        const symbolSelector = document.getElementById('symbol-selector');
+        if (symbolSelector) {
+            // Set initial value
+            symbolSelector.value = CONFIG.CURRENT_SYMBOL;
+            
+            // Add change event listener
+            symbolSelector.addEventListener('change', async (e) => {
+                const newSymbol = e.target.value;
+                await this.changeSymbol(newSymbol);
+            });
+        }
+    }
+
+    // Change symbol
+    async changeSymbol(symbol) {
+        if (!CONFIG.SYMBOLS[symbol]) {
+            console.error('Invalid symbol:', symbol);
+            return;
+        }
+
+        try {
+            // Show loading
+            this.showInitialLoading();
+            
+            // Update configuration
+            CONFIG.setCurrentSymbol(symbol);
+            
+            // Clear cache for new symbol
+            window.dataFetcher.clearCache();
+            
+            // Update UI elements
+            this.updateSymbolDisplay(symbol);
+            
+            // Reload chart data for new symbol
+            await window.chartManager.loadChartData(
+                window.chartManager.currentTimeframe,
+                false // Don't use cache
+            );
+            
+            // Update charts
+            window.chartManager.updateCharts();
+            
+            // Update market status and sessions
+            this.updateMarketStatus();
+            this.updateTradingSessions();
+            
+            // Update preferences
+            this.preferences.symbol = symbol;
+            this.savePreferences();
+            
+            console.log(`Switched to symbol: ${symbol}`);
+            
+        } catch (error) {
+            console.error('Error changing symbol:', error);
+            // Revert selector to previous value
+            document.getElementById('symbol-selector').value = CONFIG.CURRENT_SYMBOL;
+        } finally {
+            this.hideInitialLoading();
+        }
+    }
+
+    // Update symbol display
+    updateSymbolDisplay(symbol) {
+        const symbolConfig = CONFIG.SYMBOLS[symbol];
+        if (!symbolConfig) return;
+        
+        // Update current symbol display
+        const symbolElement = document.getElementById('current-symbol');
+        if (symbolElement) {
+            symbolElement.textContent = symbol;
+        }
+        
+        // Update page title
+        document.title = `${symbol} Live Trading Chart`;
+        
+        // Update logo/header if needed
+        const logoElement = document.querySelector('.logo');
+        if (logoElement) {
+            logoElement.textContent = `${symbolConfig.name} Live Chart`;
         }
     }
 
@@ -364,7 +461,7 @@ class XAUUSDApp {
 
     // Update market status
     updateMarketStatus() {
-        const isOpen = CONFIG.isMarketOpen();
+        const isOpen = CONFIG.isMarketOpen(CONFIG.CURRENT_SYMBOL);
         const statusIndicator = document.getElementById('market-status');
         const statusText = document.getElementById('market-text');
         

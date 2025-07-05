@@ -366,7 +366,7 @@ class ChartManager {
     async loadChartData(timeframe, useCache = true) {
         try {
             this.showLoading(true);
-            this.chartData = await window.dataFetcher.fetchMarketData(timeframe, useCache);
+            this.chartData = await window.dataFetcher.fetchMarketData(timeframe, useCache, CONFIG.CURRENT_SYMBOL);
             
             if (this.chartData && this.chartData.length > 0) {
                 // Calculate all indicators
@@ -590,7 +590,7 @@ class ChartManager {
         // Update price
         const priceElement = document.getElementById('current-price');
         if (priceElement) {
-            priceElement.textContent = CONFIG.utils.formatPrice(currentPrice);
+            priceElement.textContent = CONFIG.utils.formatPrice(currentPrice, CONFIG.CURRENT_SYMBOL);
         }
 
         // Update change
@@ -625,9 +625,9 @@ class ChartManager {
             const dayLow = Math.min(...todayData.map(d => d.low));
             
             // Update market data elements
-            this.updateElement('day-open', CONFIG.utils.formatPrice(dayOpen));
-            this.updateElement('day-high', CONFIG.utils.formatPrice(dayHigh));
-            this.updateElement('day-low', CONFIG.utils.formatPrice(dayLow));
+            this.updateElement('day-open', CONFIG.utils.formatPrice(dayOpen, CONFIG.CURRENT_SYMBOL));
+            this.updateElement('day-high', CONFIG.utils.formatPrice(dayHigh, CONFIG.CURRENT_SYMBOL));
+            this.updateElement('day-low', CONFIG.utils.formatPrice(dayLow, CONFIG.CURRENT_SYMBOL));
         }
 
         // Update volume

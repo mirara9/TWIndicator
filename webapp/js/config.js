@@ -1,17 +1,44 @@
-// Configuration for the XAUUSD Trading App
+// Configuration for the Multi-Symbol Trading App
 const CONFIG = {
+    // Current symbol configuration
+    CURRENT_SYMBOL: 'XAUUSD', // Default symbol
+    
+    // Supported symbols
+    SYMBOLS: {
+        XAUUSD: {
+            name: 'Gold/USD',
+            alphaVantageSymbol: 'XAU/USD',
+            twelveDataSymbol: 'XAUUSD',
+            fmpSymbol: 'XAUUSD',
+            demoBasePrice: 2050.00,
+            volatility: 0.02,
+            precision: 2,
+            type: 'forex'
+        },
+        BTCUSD: {
+            name: 'Bitcoin/USD',
+            alphaVantageSymbol: 'BTC/USD',
+            twelveDataSymbol: 'BTCUSD',
+            fmpSymbol: 'BTCUSD',
+            demoBasePrice: 45000.00,
+            volatility: 0.05,
+            precision: 2,
+            type: 'crypto'
+        }
+    },
+
     // API Configuration
     API: {
         // Primary API - Alpha Vantage (Free tier: 5 requests per minute, 500 per day)
         ALPHA_VANTAGE: {
             BASE_URL: 'https://www.alphavantage.co/query',
             API_KEY: 'demo', // Replace with your API key
-            SYMBOL: 'XAU/USD',
             FUNCTIONS: {
                 INTRADAY: 'FX_INTRADAY',
                 DAILY: 'FX_DAILY',
                 WEEKLY: 'FX_WEEKLY',
-                MONTHLY: 'FX_MONTHLY'
+                MONTHLY: 'FX_MONTHLY',
+                CRYPTO_INTRADAY: 'DIGITAL_CURRENCY_INTRADAY'
             }
         },
         
@@ -19,7 +46,6 @@ const CONFIG = {
         TWELVE_DATA: {
             BASE_URL: 'https://api.twelvedata.com',
             API_KEY: 'demo', // Replace with your API key
-            SYMBOL: 'XAUUSD',
             ENDPOINTS: {
                 TIME_SERIES: '/time_series',
                 REAL_TIME: '/price',
@@ -33,14 +59,13 @@ const CONFIG = {
             API_KEY: 'demo', // Replace with your API key
             ENDPOINTS: {
                 FOREX: '/fx',
-                HISTORICAL: '/historical-chart'
+                HISTORICAL: '/historical-chart',
+                CRYPTO: '/historical-price-full/crypto'
             }
         },
         
         // Fallback - Generate demo data if APIs fail
-        USE_DEMO_DATA: true,
-        DEMO_BASE_PRICE: 2050.00,
-        DEMO_VOLATILITY: 0.02
+        USE_DEMO_DATA: true
     },
 
     // Chart Configuration
@@ -151,19 +176,27 @@ const CONFIG = {
 };
 
 // Market hours checker
-CONFIG.isMarketOpen = () => {
+CONFIG.isMarketOpen = (symbol = CONFIG.CURRENT_SYMBOL) => {
     const now = new Date();
     const utcHour = now.getUTCHours();
     const utcDay = now.getUTCDay();
+    const symbolConfig = CONFIG.SYMBOLS[symbol];
     
-    // Forex market is closed on weekends
-    if (utcDay === 0 || utcDay === 6) return false;
+    if (!symbolConfig) return false;
     
-    // Friday 22:00 UTC to Sunday 22:00 UTC market is closed
-    if (utcDay === 5 && utcHour >= 22) return false;
-    if (utcDay === 0 && utcHour < 22) return false;
-    
-    return true;
+    if (symbolConfig.type === 'crypto') {
+        // Crypto markets are always open
+        return true;
+    } else {
+        // Forex market is closed on weekends
+        if (utcDay === 0 || utcDay === 6) return false;
+        
+        // Friday 22:00 UTC to Sunday 22:00 UTC market is closed
+        if (utcDay === 5 && utcHour >= 22) return false;
+        if (utcDay === 0 && utcHour < 22) return false;
+        
+        return true;
+    }
 };
 
 // Get current trading session
@@ -191,23 +224,55 @@ CONFIG.getCurrentSession = () => {
     return sessions;
 };
 
+// Symbol management
+CONFIG.getCurrentSymbolConfig = () => {
+    return CONFIG.SYMBOLS[CONFIG.CURRENT_SYMBOL];
+};
+
+CONFIG.setCurrentSymbol = (symbol) => {
+    if (CONFIG.SYMBOLS[symbol]) {
+        CONFIG.CURRENT_SYMBOL = symbol;
+        return true;
+    }
+    return false;
+};
+
 // API URL builders
-CONFIG.buildAlphaVantageURL = (func, interval = '1min') => {
-    const params = new URLSearchParams({
-        function: func,
-        from_symbol: 'XAU',
-        to_symbol: 'USD',
-        interval: interval,
-        apikey: CONFIG.API.ALPHA_VANTAGE.API_KEY,
-        outputsize: 'compact'
-    });
+CONFIG.buildAlphaVantageURL = (func, interval = '1min', symbol = CONFIG.CURRENT_SYMBOL) => {
+    const symbolConfig = CONFIG.SYMBOLS[symbol];
+    if (!symbolConfig) return null;
+    
+    let params;
+    
+    if (symbolConfig.type === 'crypto') {
+        params = new URLSearchParams({
+            function: CONFIG.API.ALPHA_VANTAGE.FUNCTIONS.CRYPTO_INTRADAY,
+            symbol: symbolConfig.alphaVantageSymbol.split('/')[0], // BTC
+            market: 'USD',
+            interval: interval,
+            apikey: CONFIG.API.ALPHA_VANTAGE.API_KEY
+        });
+    } else {
+        const [fromSymbol, toSymbol] = symbolConfig.alphaVantageSymbol.split('/');
+        params = new URLSearchParams({
+            function: func,
+            from_symbol: fromSymbol,
+            to_symbol: toSymbol,
+            interval: interval,
+            apikey: CONFIG.API.ALPHA_VANTAGE.API_KEY,
+            outputsize: 'compact'
+        });
+    }
     
     return `${CONFIG.API.ALPHA_VANTAGE.BASE_URL}?${params}`;
 };
 
-CONFIG.buildTwelveDataURL = (interval = '1min', outputsize = 'compact') => {
+CONFIG.buildTwelveDataURL = (interval = '1min', outputsize = 'compact', symbol = CONFIG.CURRENT_SYMBOL) => {
+    const symbolConfig = CONFIG.SYMBOLS[symbol];
+    if (!symbolConfig) return null;
+    
     const params = new URLSearchParams({
-        symbol: CONFIG.API.TWELVE_DATA.SYMBOL,
+        symbol: symbolConfig.twelveDataSymbol,
         interval: interval,
         outputsize: outputsize,
         apikey: CONFIG.API.TWELVE_DATA.API_KEY
@@ -216,14 +281,23 @@ CONFIG.buildTwelveDataURL = (interval = '1min', outputsize = 'compact') => {
     return `${CONFIG.API.TWELVE_DATA.BASE_URL}${CONFIG.API.TWELVE_DATA.ENDPOINTS.TIME_SERIES}?${params}`;
 };
 
-CONFIG.buildFMPURL = (timeframe = '1hour') => {
-    return `${CONFIG.API.FMP.BASE_URL}${CONFIG.API.FMP.ENDPOINTS.HISTORICAL}/${timeframe}/XAUUSD?apikey=${CONFIG.API.FMP.API_KEY}`;
+CONFIG.buildFMPURL = (timeframe = '1hour', symbol = CONFIG.CURRENT_SYMBOL) => {
+    const symbolConfig = CONFIG.SYMBOLS[symbol];
+    if (!symbolConfig) return null;
+    
+    if (symbolConfig.type === 'crypto') {
+        return `${CONFIG.API.FMP.BASE_URL}${CONFIG.API.FMP.ENDPOINTS.CRYPTO}/${symbolConfig.fmpSymbol}?apikey=${CONFIG.API.FMP.API_KEY}`;
+    } else {
+        return `${CONFIG.API.FMP.BASE_URL}${CONFIG.API.FMP.ENDPOINTS.HISTORICAL}/${timeframe}/${symbolConfig.fmpSymbol}?apikey=${CONFIG.API.FMP.API_KEY}`;
+    }
 };
 
 // Utility functions
 CONFIG.utils = {
-    formatPrice: (price) => {
-        return parseFloat(price).toFixed(2);
+    formatPrice: (price, symbol = CONFIG.CURRENT_SYMBOL) => {
+        const symbolConfig = CONFIG.SYMBOLS[symbol];
+        const precision = symbolConfig ? symbolConfig.precision : 2;
+        return parseFloat(price).toFixed(precision);
     },
     
     formatChange: (change, percentage) => {

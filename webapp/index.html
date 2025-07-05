@@ -15,9 +15,15 @@
         <!-- Header -->
         <header class="header">
             <div class="header-left">
-                <h1 class="logo">XAUUSD Live Chart</h1>
+                <h1 class="logo">Multi-Symbol Live Chart</h1>
+                <div class="symbol-selector">
+                    <select id="symbol-selector" class="symbol-dropdown">
+                        <option value="XAUUSD">XAUUSD - Gold/USD</option>
+                        <option value="BTCUSD">BTCUSD - Bitcoin/USD</option>
+                    </select>
+                </div>
                 <div class="symbol-info">
-                    <span class="symbol">XAUUSD</span>
+                    <span class="symbol" id="current-symbol">XAUUSD</span>
                     <span class="price" id="current-price">Loading...</span>
                     <span class="change" id="price-change">+0.00 (0.00%)</span>
                 </div>
